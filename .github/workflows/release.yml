@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build Linux binary
+        run: bun build ./index.ts --compile --outfile dist/bud-linux
+
+      - name: Build Windows binary
+        run: bun build ./index.ts --compile --target bun-windows-x64 --outfile dist/bud-windows.exe
+
+      - name: Create release archives
+        run: |
+          cd dist
+          tar -czvf bud-linux-x64.tar.gz bud-linux
+          zip bud-windows-x64.zip bud-windows.exe
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/bud-linux-x64.tar.gz
+            dist/bud-windows-x64.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
