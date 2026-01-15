@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { ArrowLeft, ExternalLink, GitBranch, GitMerge, User, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X } from "lucide-react";
+import { ArrowLeft, ExternalLink, GitBranch, GitMerge, User, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X, Maximize2, Minimize2 } from "lucide-react";
 import { NotesEditor } from "../components/NotesEditor";
+import { Markdown } from "../components/Markdown";
 import type { PRWithTicket } from "../../services/linkingService";
 
 interface PRStatus {
@@ -67,6 +68,7 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutResult, setCheckoutResult] = useState<{ success: boolean; message: string } | null>(null);
   const [currentBranch, setCurrentBranch] = useState<string | null>(null);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
 
   const fetchPR = useCallback(async () => {
     setLoading(true);
@@ -332,10 +334,23 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
         {/* Description */}
         {pr.description && (
           <div className="detail-section">
-            <h4 className="detail-section-title">
-              <FileText className="w-4 h-4" /> Description
-            </h4>
-            <div className="detail-description">{pr.description}</div>
+            <div className="detail-section-header">
+              <h4 className="detail-section-title">
+                <FileText className="w-4 h-4" /> Description
+              </h4>
+              <button
+                className="btn-icon-sm"
+                onClick={() => setDescriptionExpanded(!descriptionExpanded)}
+                title={descriptionExpanded ? "Collapse" : "Expand"}
+              >
+                {descriptionExpanded ? (
+                  <Minimize2 className="w-4 h-4" />
+                ) : (
+                  <Maximize2 className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+            <Markdown content={pr.description} className={descriptionExpanded ? "expanded" : ""} />
           </div>
         )}
 

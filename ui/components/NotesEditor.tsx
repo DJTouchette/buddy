@@ -100,13 +100,26 @@ export function NotesEditor({ type, id }: NotesEditorProps) {
   };
 
   // Handle closing - save if needed
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     if (isEditing && content !== originalContent) {
       saveNote();
     }
     setIsEditing(false);
     setIsOpen(false);
-  };
+  }, [isEditing, content, originalContent, saveNote]);
+
+  // Close on Escape key
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        handleClose();
+      }
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isOpen, handleClose]);
 
   const hasContent = content.trim().length > 0;
   const hasChanges = content !== originalContent;

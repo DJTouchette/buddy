@@ -156,7 +156,7 @@ export class JiraService {
     if (effectiveBoardId) {
       try {
         const response = await this.agileRequest<{ issues: JiraIssue[] }>(
-          `/board/${effectiveBoardId}/issue?jql=${encodeURIComponent("sprint in openSprints()")}&maxResults=100&fields=summary,status,assignee,issuetype,description,created,updated,priority,attachment,subtasks,parent`
+          `/board/${effectiveBoardId}/issue?jql=${encodeURIComponent("sprint in openSprints()")}&maxResults=500&fields=summary,status,assignee,issuetype,description,created,updated,priority,attachment,subtasks,parent`
         );
         return response.issues;
       } catch (error) {
@@ -167,7 +167,7 @@ export class JiraService {
 
     // Fallback: use JQL search (won't have board rank order)
     const jql = `sprint in openSprints() ORDER BY rank, updated DESC`;
-    return this.searchIssues(jql);
+    return this.searchIssues(jql, 500);
   }
 
   async getIssue(issueKey: string): Promise<JiraIssue> {

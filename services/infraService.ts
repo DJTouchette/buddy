@@ -17,6 +17,10 @@ import {
   DescribeLogStreamsCommand,
   FilterLogEventsCommand,
 } from "@aws-sdk/client-cloudwatch-logs";
+import {
+  AppSyncClient,
+  ListGraphqlApisCommand,
+} from "@aws-sdk/client-appsync";
 import { Glob } from "bun";
 import * as path from "path";
 
@@ -80,6 +84,7 @@ export class InfraService {
   private cfnClient: CloudFormationClient;
   private lambdaClient: LambdaClient;
   private logsClient: CloudWatchLogsClient;
+  private appSyncClient: AppSyncClient;
   private region: string;
 
   constructor(region: string = "us-east-2") {
@@ -87,6 +92,7 @@ export class InfraService {
     this.cfnClient = new CloudFormationClient({ region });
     this.lambdaClient = new LambdaClient({ region });
     this.logsClient = new CloudWatchLogsClient({ region });
+    this.appSyncClient = new AppSyncClient({ region });
   }
 
   /**
@@ -849,6 +855,101 @@ export class InfraService {
 
       // Wait before polling again
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+  }
+
+  /**
+   * Get all AppSync APIs (handles pagination)
+   */
+  private async getAllAppSyncApis() {
+    const allApis: Array<{
+      name: string;
+      apiId: string;
+      uris: Record<string, string> | undefined;
+    }> = [];
+
+    let nextToken: string | undefined;
+
+    do {
+      const command = new ListGraphqlApisCommand({
+        nextToken,
+        maxResults: 25,
+      });
+      const response = await this.appSyncClient.send(command);
+
+      if (response.graphqlApis) {
+        for (const api of response.graphqlApis) {
+          allApis.push({
+            name: api.name || "Unknown",
+            apiId: api.apiId || "",
+            uris: api.uris,
+          });
+        }
+      }
+
+      nextToken = response.nextToken;
+    } while (nextToken);
+
+    return allApis;
+  }
+
+  /**
+   * Get the AppSync GraphQL URL for a given environment suffix
+   */
+  async getAppSyncUrl(envSuffix: string): Promise<string | null> {
+    try {
+      const apis = await this.getAllAppSyncApis();
+      const suffix = envSuffix.toLowerCase();
+
+      console.log(`Looking for AppSync API matching suffix: "${suffix}"`);
+      console.log(`Available APIs: ${apis.map(a => a.name).join(", ")}`);
+
+      // Try different matching strategies
+      const matchingApi = apis.find((api) => {
+        const name = api.name.toLowerCase();
+
+        // Exact suffix match at end (e.g., "myapp-damien-1" matches "damien-1")
+        if (name.endsWith(`-${suffix}`)) return true;
+
+        // Suffix appears in name (e.g., "damien-1-api" matches "damien-1")
+        if (name.includes(suffix)) return true;
+
+        // Handle case where suffix might have extra formatting
+        // e.g., "damien1" matches "damien-1"
+        const normalizedSuffix = suffix.replace(/-/g, "");
+        const normalizedName = name.replace(/-/g, "");
+        if (normalizedName.includes(normalizedSuffix)) return true;
+
+        return false;
+      });
+
+      if (matchingApi) {
+        console.log(`Found matching API: ${matchingApi.name}`);
+        return matchingApi.uris?.GRAPHQL || null;
+      }
+
+      console.log(`No matching API found for suffix: ${suffix}`);
+      return null;
+    } catch (error) {
+      console.error("Failed to get AppSync URL:", error);
+      return null;
+    }
+  }
+
+  /**
+   * List all AppSync APIs to help identify the right one
+   */
+  async listAppSyncApis(): Promise<Array<{ name: string; url: string | null }>> {
+    try {
+      const apis = await this.getAllAppSyncApis();
+
+      return apis.map((api) => ({
+        name: api.name,
+        url: api.uris?.GRAPHQL || null,
+      }));
+    } catch (error) {
+      console.error("Failed to list AppSync APIs:", error);
+      return [];
     }
   }
 }

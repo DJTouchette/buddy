@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { ExternalLink, GitBranch, GitMerge, User, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X, Expand } from "lucide-react";
+import { ExternalLink, GitBranch, GitMerge, User, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X, Expand, Maximize2, Minimize2 } from "lucide-react";
 import { Modal } from "./Modal";
 import { NotesEditor } from "./NotesEditor";
+import { Markdown } from "./Markdown";
 import type { PRWithTicket } from "../../services/linkingService";
 
 interface PRStatus {
@@ -67,12 +68,14 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutResult, setCheckoutResult] = useState<{ success: boolean; message: string } | null>(null);
   const [currentBranch, setCurrentBranch] = useState<string | null>(null);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
 
   useEffect(() => {
     if (pr) {
       setLoadingStatuses(true);
       setCheckoutResult(null);
       setCurrentBranch(null);
+      setDescriptionExpanded(false);
 
       // Fetch PR statuses
       fetch(`/api/prs/${pr.pullRequestId}/statuses`)
@@ -283,10 +286,23 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
         {/* Description */}
         {pr.description && (
           <div className="detail-section">
-            <h4 className="detail-section-title">
-              <FileText className="w-4 h-4" /> Description
-            </h4>
-            <div className="detail-description">{pr.description}</div>
+            <div className="detail-section-header">
+              <h4 className="detail-section-title">
+                <FileText className="w-4 h-4" /> Description
+              </h4>
+              <button
+                className="btn-icon-sm"
+                onClick={() => setDescriptionExpanded(!descriptionExpanded)}
+                title={descriptionExpanded ? "Collapse" : "Expand"}
+              >
+                {descriptionExpanded ? (
+                  <Minimize2 className="w-4 h-4" />
+                ) : (
+                  <Maximize2 className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+            <Markdown content={pr.description} className={descriptionExpanded ? "expanded" : ""} />
           </div>
         )}
 

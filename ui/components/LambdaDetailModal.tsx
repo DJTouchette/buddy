@@ -85,6 +85,21 @@ export function LambdaDetailModal({
   // The name to use for saving logs
   const logLambdaName = lambda.localName || lambda.functionName;
 
+  // Close on Escape key
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (viewingLog) {
+          setViewingLog(null);
+        } else {
+          onClose();
+        }
+      }
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [onClose, viewingLog]);
+
   useEffect(() => {
     fetchDetails();
     fetchSavedLogs();

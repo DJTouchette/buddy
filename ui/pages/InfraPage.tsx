@@ -19,6 +19,10 @@ import {
   Cloud,
   Hammer,
   ShieldAlert,
+  Monitor,
+  Copy,
+  Save,
+  FileEdit,
 } from "lucide-react";
 import { JobOutput } from "../components/JobOutput";
 import { LambdaDetailModal } from "../components/LambdaDetailModal";
@@ -79,7 +83,7 @@ interface AwsLambda {
   stackType: string | null;
 }
 
-type TabType = "build" | "aws-lambdas";
+type TabType = "build" | "aws-lambdas" | "frontend";
 
 const TYPE_LABELS: Record<string, { label: string; icon: React.ElementType }> = {
   dotnet: { label: ".NET Lambdas", icon: Server },
@@ -133,6 +137,14 @@ export function InfraPage() {
   const [selectedAwsLambda, setSelectedAwsLambda] = useState<AwsLambda | null>(null);
   const [localLambdaNames, setLocalLambdaNames] = useState<string[]>([]);
   const [activeJobLambdaName, setActiveJobLambdaName] = useState<string | null>(null);
+
+  // Frontend tab state
+  const [frontendEnv, setFrontendEnv] = useState<{ exists: boolean; content: string; path: string } | null>(null);
+  const [frontendEnvLoading, setFrontendEnvLoading] = useState(false);
+  const [generatedEnv, setGeneratedEnv] = useState<{ content: string; appSyncUrl: string | null } | null>(null);
+  const [appSyncApis, setAppSyncApis] = useState<Array<{ name: string; url: string | null }>>([]);
+  const [frontendSaving, setFrontendSaving] = useState(false);
+  const [frontendMessage, setFrontendMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const fetchData = useCallback(async () => {
     setError(null);
@@ -235,6 +247,46 @@ export function InfraPage() {
     }
   }, [activeTab, currentEnv, fetchAwsLambdas]);
 
+  // Fetch frontend env data
+  const fetchFrontendData = useCallback(async () => {
+    setFrontendEnvLoading(true);
+    setFrontendMessage(null);
+    try {
+      const [envRes, appSyncRes, generateRes] = await Promise.all([
+        fetch("/api/infra/frontend/env"),
+        fetch("/api/infra/frontend/appsync"),
+        currentEnv ? fetch("/api/infra/frontend/generate-env") : Promise.resolve(null),
+      ]);
+
+      const envData = await envRes.json();
+      setFrontendEnv(envData);
+
+      const appSyncData = await appSyncRes.json();
+      setAppSyncApis(appSyncData.apis || []);
+
+      if (generateRes) {
+        const generateData = await generateRes.json();
+        if (!generateData.error) {
+          setGeneratedEnv({
+            content: generateData.content,
+            appSyncUrl: generateData.appSyncUrl,
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch frontend data:", err);
+    } finally {
+      setFrontendEnvLoading(false);
+    }
+  }, [currentEnv]);
+
+  // Fetch frontend data when tab changes
+  useEffect(() => {
+    if (activeTab === "frontend") {
+      fetchFrontendData();
+    }
+  }, [activeTab, fetchFrontendData]);
+
   useEffect(() => {
     fetchData();
     fetchJobs(true); // Restore from storage on initial load
@@ -252,11 +304,15 @@ export function InfraPage() {
       if (activeTab === "aws-lambdas") {
         fetchAwsLambdas(true);
       }
+      // Also refresh frontend data if on that tab
+      if (activeTab === "frontend") {
+        fetchFrontendData();
+      }
     };
 
     window.addEventListener("environment-changed", handleEnvChange);
     return () => window.removeEventListener("environment-changed", handleEnvChange);
-  }, [fetchData, fetchAwsLambdas, activeTab]);
+  }, [fetchData, fetchAwsLambdas, fetchFrontendData, activeTab]);
 
   // Poll build info during active builds to show real-time progress
   useEffect(() => {
@@ -405,6 +461,40 @@ export function InfraPage() {
     }
   };
 
+  // Frontend env helpers
+  const copyEnvToClipboard = async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setFrontendMessage({ type: "success", text: "Copied to clipboard!" });
+      setTimeout(() => setFrontendMessage(null), 3000);
+    } catch (err) {
+      setFrontendMessage({ type: "error", text: "Failed to copy to clipboard" });
+    }
+  };
+
+  const saveEnvToFile = async (content: string) => {
+    setFrontendSaving(true);
+    try {
+      const res = await fetch("/api/infra/frontend/env", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setFrontendMessage({ type: "success", text: `Saved to ${data.path}` });
+        // Refresh the env data
+        fetchFrontendData();
+      } else {
+        setFrontendMessage({ type: "error", text: data.error || "Failed to save" });
+      }
+    } catch (err) {
+      setFrontendMessage({ type: "error", text: "Failed to save .env file" });
+    } finally {
+      setFrontendSaving(false);
+    }
+  };
+
   // Group lambdas by type
   const lambdasByType = lambdas.reduce((acc, lambda) => {
     if (!acc[lambda.type]) acc[lambda.type] = [];
@@ -523,6 +613,13 @@ export function InfraPage() {
         >
           <Cloud className="w-4 h-4" />
           AWS Lambdas
+        </button>
+        <button
+          className={`infra-tab ${activeTab === "frontend" ? "active" : ""}`}
+          onClick={() => setActiveTab("frontend")}
+        >
+          <Monitor className="w-4 h-4" />
+          Frontend
         </button>
       </div>
 
@@ -744,6 +841,138 @@ export function InfraPage() {
                     </div>
                   );
                 })}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Frontend Tab */}
+      {activeTab === "frontend" && (
+        <section className="infra-section">
+          <div className="section-header">
+            <h2 className="section-title">
+              <Monitor className="w-5 h-5" />
+              Frontend Environment
+            </h2>
+            <button
+              className="btn-secondary"
+              onClick={fetchFrontendData}
+              disabled={frontendEnvLoading}
+            >
+              <RefreshCw className={`w-4 h-4 ${frontendEnvLoading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
+
+          {frontendMessage && (
+            <div className={`alert ${frontendMessage.type === "success" ? "alert-success" : "alert-error"}`}>
+              {frontendMessage.type === "success" ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+              <span>{frontendMessage.text}</span>
+            </div>
+          )}
+
+          {frontendEnvLoading ? (
+            <div className="page-loading" style={{ padding: "2rem" }}>
+              <Loader2 className="w-6 h-6 animate-spin" />
+              <span>Loading frontend configuration...</span>
+            </div>
+          ) : !currentEnv ? (
+            <div className="alert alert-warning">
+              <AlertTriangle className="w-5 h-5" />
+              <span>Select an environment to configure frontend</span>
+            </div>
+          ) : (
+            <div className="frontend-config">
+              {/* Generated .env */}
+              <div className="frontend-card">
+                <div className="frontend-card-header">
+                  <h3>
+                    <FileEdit className="w-4 h-4" />
+                    Generated .env for {currentEnv}
+                  </h3>
+                  <div className="flex gap-2">
+                    <button
+                      className="btn-secondary"
+                      onClick={() => generatedEnv && copyEnvToClipboard(generatedEnv.content)}
+                      disabled={!generatedEnv}
+                      title="Copy to clipboard"
+                    >
+                      <Copy className="w-4 h-4" />
+                      Copy
+                    </button>
+                    <button
+                      className="btn-primary"
+                      onClick={() => generatedEnv && saveEnvToFile(generatedEnv.content)}
+                      disabled={!generatedEnv || frontendSaving}
+                      title="Save to clients/web/.env"
+                    >
+                      {frontendSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                      Save to File
+                    </button>
+                  </div>
+                </div>
+                {generatedEnv ? (
+                  <pre className="frontend-env-content">{generatedEnv.content}</pre>
+                ) : (
+                  <div className="text-muted" style={{ padding: "1rem" }}>
+                    Could not generate .env configuration. Make sure an environment is selected.
+                  </div>
+                )}
+                {generatedEnv && !generatedEnv.appSyncUrl && (
+                  <div className="alert alert-warning" style={{ marginTop: "0.5rem" }}>
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>Could not find AppSync URL for environment "{currentEnv}". You may need to select it manually.</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Current .env file */}
+              <div className="frontend-card">
+                <div className="frontend-card-header">
+                  <h3>
+                    <FileCode className="w-4 h-4" />
+                    Current .env File
+                  </h3>
+                  {frontendEnv?.path && (
+                    <span className="text-muted text-sm">{frontendEnv.path}</span>
+                  )}
+                </div>
+                {frontendEnv?.exists ? (
+                  <pre className="frontend-env-content">{frontendEnv.content}</pre>
+                ) : (
+                  <div className="text-muted" style={{ padding: "1rem" }}>
+                    No .env file exists at clients/web/.env
+                  </div>
+                )}
+              </div>
+
+              {/* Available AppSync APIs */}
+              {appSyncApis.length > 0 && (
+                <div className="frontend-card">
+                  <div className="frontend-card-header">
+                    <h3>
+                      <Cloud className="w-4 h-4" />
+                      Available AppSync APIs
+                    </h3>
+                  </div>
+                  <div className="appsync-list">
+                    {appSyncApis.map((api) => (
+                      <div key={api.name} className="appsync-item">
+                        <span className="appsync-name">{api.name}</span>
+                        {api.url && (
+                          <button
+                            className="btn-secondary btn-sm"
+                            onClick={() => copyEnvToClipboard(api.url!)}
+                            title="Copy URL"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </section>

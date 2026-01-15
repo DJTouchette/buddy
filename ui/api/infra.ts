@@ -311,5 +311,128 @@ export function infraRoutes(ctx: InfraApiContext) {
         }
       },
     },
+
+    // GET /api/infra/frontend/env - Read the frontend .env file
+    "/api/infra/frontend/env": {
+      GET: async () => {
+        try {
+          const selectedRepo = ctx.cacheService.getSelectedRepo();
+          const repoPath = selectedRepo?.path;
+          console.log("Selected repo:", selectedRepo?.name, "path:", repoPath);
+
+          if (!repoPath) {
+            return Response.json({ error: "No repository selected" }, { status: 400 });
+          }
+
+          const envPath = `${repoPath}/clients/web/.env`;
+          console.log("Looking for .env at:", envPath);
+
+          // Try to read the file directly - if it fails, it doesn't exist
+          try {
+            const file = Bun.file(envPath);
+            const content = await file.text();
+            console.log("File read successfully, length:", content.length);
+
+            return Response.json({
+              exists: true,
+              content,
+              path: envPath,
+            });
+          } catch (readError) {
+            console.log("Could not read file:", readError);
+            return Response.json({
+              exists: false,
+              content: "",
+              path: envPath,
+            });
+          }
+        } catch (error) {
+          console.error("Error reading .env:", error);
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+      PUT: async (req: Request) => {
+        try {
+          const selectedRepo = ctx.cacheService.getSelectedRepo();
+          const repoPath = selectedRepo?.path;
+          if (!repoPath) {
+            return Response.json({ error: "No repository selected" }, { status: 400 });
+          }
+
+          const body = (await req.json()) as { content: string };
+          const envPath = `${repoPath}/clients/web/.env`;
+
+          await Bun.write(envPath, body.content);
+
+          return Response.json({
+            success: true,
+            path: envPath,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // GET /api/infra/frontend/appsync - Get AppSync URL for current environment
+    "/api/infra/frontend/appsync": {
+      GET: async () => {
+        try {
+          const currentEnv = await ctx.configService.getCurrentEnvironment();
+
+          // Get all AppSync APIs
+          const apis = await infraService.listAppSyncApis();
+
+          // Get the URL for the current environment if one is selected
+          let currentUrl: string | null = null;
+          if (currentEnv) {
+            currentUrl = await infraService.getAppSyncUrl(currentEnv);
+          }
+
+          return Response.json({
+            currentEnvironment: currentEnv,
+            currentUrl,
+            apis,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // GET /api/infra/frontend/generate-env - Generate .env content for current environment
+    "/api/infra/frontend/generate-env": {
+      GET: async () => {
+        try {
+          const currentEnv = await ctx.configService.getCurrentEnvironment();
+          const stage = await ctx.configService.getInfraStage();
+
+          if (!currentEnv) {
+            return Response.json({ error: "No environment selected" }, { status: 400 });
+          }
+
+          // Get the AppSync URL for this environment
+          const appSyncUrl = await infraService.getAppSyncUrl(currentEnv);
+
+          // Generate the .env content
+          const lines = [
+            `REACT_APP_STAGE=${stage}`,
+            `REACT_APP_SUFFIX=${currentEnv}`,
+            `NODE_OPTIONS=--max_old_space_size=8192`,
+            `BROWSER=none`,
+            `REACT_APP_APPSYNC_URL=${appSyncUrl || "# Could not find AppSync URL for this environment"}`,
+          ];
+
+          return Response.json({
+            content: lines.join("\n"),
+            environment: currentEnv,
+            stage,
+            appSyncUrl,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
   };
 }

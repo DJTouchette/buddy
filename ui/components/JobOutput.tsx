@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { X, Square, Maximize2, Minimize2, CheckCircle, XCircle, Loader2, ChevronUp, ChevronDown, ArrowDown, Save } from "lucide-react";
+import { X, StopCircle, Maximize2, Minimize2, CheckCircle, XCircle, Loader2, ChevronUp, ChevronDown, ArrowDown, Save } from "lucide-react";
 
 interface Job {
   id: string;
@@ -219,7 +219,7 @@ export function JobOutput({ job, onClose, onCancel, onComplete, lambdaName }: Jo
           )}
           {isRunning && (
             <button className="btn-sm btn-danger" onClick={onCancel} title="Cancel job">
-              <Square className="w-3 h-3" />
+              <StopCircle className="w-3 h-3" />
               Cancel
             </button>
           )}

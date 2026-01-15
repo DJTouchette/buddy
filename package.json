@@ -24,12 +24,14 @@
     "bud": "./index.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-appsync": "^3.969.0",
     "@aws-sdk/client-cloudformation": "^3.968.0",
     "@aws-sdk/client-cloudwatch-logs": "^3.969.0",
     "@aws-sdk/client-lambda": "^3.969.0",
     "@inquirer/prompts": "^8.0.2",
     "@modelcontextprotocol/sdk": "^1.25.2",
     "lucide-react": "^0.562.0",
+    "marked": "^17.0.1",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "yaml": "^2.8.2",
