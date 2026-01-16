@@ -6,6 +6,7 @@ import type { JobService } from "./jobService";
 import type { LambdaInfo } from "./infraService";
 
 const isWindows = os.platform() === "win32";
+const yarnCmd = isWindows ? "yarn.cmd" : "yarn";
 
 export interface BuildResult {
   name: string;
@@ -469,7 +470,7 @@ export class LambdaBuilderService {
 
     // Install dependencies
     output(`> yarn install --frozen-lockfile`);
-    const yarnProc = Bun.spawn(["yarn", "install", "--frozen-lockfile"], {
+    const yarnProc = Bun.spawn([yarnCmd, "install", "--frozen-lockfile"], {
       cwd: lambda.path,
       stdout: "pipe",
       stderr: "pipe",
@@ -585,7 +586,7 @@ export class LambdaBuilderService {
 
     // Install all dependencies
     output(`> yarn install`);
-    let proc = Bun.spawn(["yarn", "install"], {
+    let proc = Bun.spawn([yarnCmd, "install"], {
       cwd: lambda.path,
       stdout: "pipe",
       stderr: "pipe",
@@ -595,7 +596,7 @@ export class LambdaBuilderService {
 
     // Compile TypeScript
     output(`> yarn tsc`);
-    proc = Bun.spawn(["yarn", "tsc"], {
+    proc = Bun.spawn([yarnCmd, "tsc"], {
       cwd: lambda.path,
       stdout: "pipe",
       stderr: "pipe",
@@ -607,7 +608,7 @@ export class LambdaBuilderService {
     output(`> Installing production dependencies only...`);
     await this.rmDir(path.join(lambda.path, "node_modules"));
 
-    proc = Bun.spawn(["yarn", "install", "--production"], {
+    proc = Bun.spawn([yarnCmd, "install", "--production"], {
       cwd: lambda.path,
       stdout: "pipe",
       stderr: "pipe",
@@ -640,7 +641,7 @@ export class LambdaBuilderService {
 
     // Restore dev dependencies
     output(`> Restoring dev dependencies...`);
-    proc = Bun.spawn(["yarn", "install"], {
+    proc = Bun.spawn([yarnCmd, "install"], {
       cwd: lambda.path,
       stdout: "pipe",
       stderr: "pipe",

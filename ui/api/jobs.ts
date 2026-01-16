@@ -4,6 +4,13 @@ import { LambdaBuilderService } from "../../services/lambdaBuilderService";
 import type { CacheService } from "../../services/cacheService";
 import type { ConfigService } from "../../services/configService";
 import { isProtectedEnvironment } from "./infra";
+import * as os from "os";
+
+// On Windows, need to use .cmd extension for npm/yarn scripts
+const isWindows = os.platform() === "win32";
+const yarnCmd = isWindows ? "yarn.cmd" : "yarn";
+const npxCmd = isWindows ? "npx.cmd" : "npx";
+const awsCmd = isWindows ? "aws.cmd" : "aws";
 
 export interface JobsApiContext {
   cacheService: CacheService;
@@ -430,8 +437,8 @@ async function executeCdkJob(
 
     ctx.jobService.appendOutput(jobId, `> yarn ${cdkArgs.join(" ")}`);
 
-    // Run CDK command
-    const proc = Bun.spawn(["yarn", ...cdkArgs], {
+    // Run CDK command (use yarn.cmd on Windows)
+    const proc = Bun.spawn([yarnCmd, ...cdkArgs], {
       cwd: infraPath,
       env,
       stdout: "pipe",
