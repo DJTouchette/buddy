@@ -41,6 +41,7 @@ export function Layout({ children, currentPath, navigate }: LayoutProps) {
   }, []);
 
   const navItems = [
+    { path: "/dashboard", label: "Dashboard" },
     { path: "/tickets", label: "Tickets" },
     { path: "/prs", label: "Pull Requests" },
     { path: "/git", label: "Git" },
@@ -48,7 +49,10 @@ export function Layout({ children, currentPath, navigate }: LayoutProps) {
   ];
 
   const isActive = (path: string) => {
-    return currentPath === path || (currentPath === "/" && path === "/tickets");
+    if (path === "/dashboard") {
+      return currentPath === "/" || currentPath === "/dashboard";
+    }
+    return currentPath === path;
   };
 
   return (

@@ -160,5 +160,125 @@ export function jiraRoutes(ctx: ApiContext) {
         }
       },
     },
+
+    // GET /api/jira/workflow - Get workflow statuses
+    "/api/jira/workflow": {
+      GET: async () => {
+        try {
+          const statuses = await ctx.configService.getJiraWorkflowStatuses();
+          return Response.json({ statuses });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // GET /api/jira/tickets/:key - Get a single ticket by key
+    "/api/jira/tickets/:key": {
+      GET: async (req: Request & { params: { key: string } }) => {
+        try {
+          const { jiraService, jiraConfig } = await ctx.getServices();
+          const issueKey = req.params.key;
+
+          const issue = await jiraService.getIssue(issueKey);
+
+          return Response.json({
+            issue,
+            jiraHost: jiraConfig.host,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // GET /api/jira/tickets/:key/transitions - Get available transitions for a ticket
+    "/api/jira/tickets/:key/transitions": {
+      GET: async (req: Request & { params: { key: string } }) => {
+        try {
+          const { jiraService } = await ctx.getServices();
+          const issueKey = req.params.key;
+
+          const transitions = await jiraService.getTransitions(issueKey);
+          const workflowStatuses = await ctx.configService.getJiraWorkflowStatuses();
+
+          return Response.json({
+            transitions,
+            workflowStatuses,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // PUT /api/jira/tickets/:key/description - Update ticket description
+    "/api/jira/tickets/:key/description": {
+      PUT: async (req: Request & { params: { key: string } }) => {
+        try {
+          const { jiraService } = await ctx.getServices();
+          const issueKey = req.params.key;
+          const body = (await req.json()) as { description: string };
+
+          if (body.description === undefined) {
+            return Response.json({ error: "description is required" }, { status: 400 });
+          }
+
+          await jiraService.updateIssueDescription(issueKey, body.description);
+
+          // Get the updated issue
+          const updatedIssue = await jiraService.getIssue(issueKey);
+
+          return Response.json({
+            success: true,
+            issue: updatedIssue,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // POST /api/jira/tickets/:key/transition - Transition a ticket to a new status
+    "/api/jira/tickets/:key/transition": {
+      POST: async (req: Request & { params: { key: string } }) => {
+        try {
+          const { jiraService } = await ctx.getServices();
+          const issueKey = req.params.key;
+          const body = (await req.json()) as { statusName: string };
+
+          if (!body.statusName) {
+            return Response.json({ error: "statusName is required" }, { status: 400 });
+          }
+
+          const success = await jiraService.transitionIssueByName(issueKey, body.statusName);
+
+          if (!success) {
+            // Get available transitions to help debug
+            const transitions = await jiraService.getTransitions(issueKey);
+            const availableStatuses = transitions.map((t) => t.to.name).join(", ");
+            return Response.json(
+              {
+                error: `Cannot transition to "${body.statusName}". Available transitions: ${availableStatuses || "none"}`
+              },
+              { status: 400 }
+            );
+          }
+
+          // Get the updated issue
+          const updatedIssue = await jiraService.getIssue(issueKey);
+
+          // Invalidate cache since ticket status changed
+          ctx.cacheService.invalidate("tickets");
+
+          return Response.json({
+            success: true,
+            issue: updatedIssue,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
   };
 }

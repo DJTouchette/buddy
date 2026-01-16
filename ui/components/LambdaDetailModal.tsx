@@ -16,6 +16,7 @@ import {
   FileText,
   Trash2,
   ShieldAlert,
+  ExternalLink,
 } from "lucide-react";
 import { LogLine } from "./JobOutput";
 
@@ -67,6 +68,9 @@ export function LambdaDetailModal({
   const [details, setDetails] = useState<{
     config: AwsLambdaInfo;
     envVars: Record<string, string>;
+    awsConsoleUrl?: string;
+    awsLogsUrl?: string;
+    region?: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -226,6 +230,32 @@ export function LambdaDetailModal({
           </div>
         ) : (
           <>
+            {/* AWS Console Links */}
+            <div className="lambda-aws-links">
+              {details?.awsConsoleUrl && (
+                <a
+                  href={details.awsConsoleUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="aws-link"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Open in AWS Console
+                </a>
+              )}
+              {details?.awsLogsUrl && (
+                <a
+                  href={details.awsLogsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="aws-link"
+                >
+                  <ScrollText className="w-4 h-4" />
+                  View CloudWatch Logs
+                </a>
+              )}
+            </div>
+
             <div className="lambda-detail-grid">
               <div className="lambda-detail-item">
                 <Server className="w-4 h-4" />

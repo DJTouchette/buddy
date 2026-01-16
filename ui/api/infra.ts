@@ -305,7 +305,13 @@ export function infraRoutes(ctx: InfraApiContext) {
             return Response.json({ error: "Lambda function not found" }, { status: 404 });
           }
 
-          return Response.json(details);
+          // Add AWS Console URLs
+          return Response.json({
+            ...details,
+            awsConsoleUrl: infraService.getLambdaConsoleUrl(functionName),
+            awsLogsUrl: infraService.getLambdaLogsConsoleUrl(functionName),
+            region: infraService.getRegion(),
+          });
         } catch (error) {
           return Response.json({ error: String(error) }, { status: 500 });
         }

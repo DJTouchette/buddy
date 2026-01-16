@@ -204,7 +204,10 @@ export class JiraService {
 
   async transitionIssueByName(issueKey: string, statusName: string): Promise<boolean> {
     const transitions = await this.getTransitions(issueKey);
-    const transition = transitions.find((t) => t.to.name === statusName);
+    // Case-insensitive match
+    const transition = transitions.find(
+      (t) => t.to.name.toLowerCase() === statusName.toLowerCase()
+    );
 
     if (!transition) {
       return false;
@@ -212,6 +215,156 @@ export class JiraService {
 
     await this.transitionIssue(issueKey, transition.id);
     return true;
+  }
+
+  async updateIssueDescription(issueKey: string, description: string): Promise<void> {
+    // Convert markdown to ADF (Atlassian Document Format)
+    const content: any[] = [];
+    const lines = description.split("\n");
+    let i = 0;
+
+    const parseInlineMarks = (text: string): any[] => {
+      const nodes: any[] = [];
+      // Regex patterns for inline formatting
+      const patterns = [
+        { regex: /\*\*(.+?)\*\*/g, mark: "strong" },
+        { regex: /\*(.+?)\*/g, mark: "em" },
+        { regex: /`(.+?)`/g, mark: "code" },
+        { regex: /~~(.+?)~~/g, mark: "strike" },
+        { regex: /\[(.+?)\]\((.+?)\)/g, mark: "link" },
+      ];
+
+      // Simple approach: just return text node for now, JIRA will parse markdown
+      if (text) {
+        nodes.push({ type: "text", text });
+      }
+      return nodes;
+    };
+
+    while (i < lines.length) {
+      const line = lines[i];
+
+      // Skip empty lines
+      if (!line.trim()) {
+        i++;
+        continue;
+      }
+
+      // Headings
+      const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+      if (headingMatch) {
+        content.push({
+          type: "heading",
+          attrs: { level: headingMatch[1].length },
+          content: parseInlineMarks(headingMatch[2]),
+        });
+        i++;
+        continue;
+      }
+
+      // Bullet list
+      if (line.match(/^\s*[\*\-]\s+/)) {
+        const listItems: any[] = [];
+        while (i < lines.length && lines[i].match(/^\s*[\*\-]\s+/)) {
+          const itemText = lines[i].replace(/^\s*[\*\-]\s+/, "");
+          listItems.push({
+            type: "listItem",
+            content: [{ type: "paragraph", content: parseInlineMarks(itemText) }],
+          });
+          i++;
+        }
+        content.push({ type: "bulletList", content: listItems });
+        continue;
+      }
+
+      // Ordered list
+      if (line.match(/^\s*\d+\.\s+/)) {
+        const listItems: any[] = [];
+        while (i < lines.length && lines[i].match(/^\s*\d+\.\s+/)) {
+          const itemText = lines[i].replace(/^\s*\d+\.\s+/, "");
+          listItems.push({
+            type: "listItem",
+            content: [{ type: "paragraph", content: parseInlineMarks(itemText) }],
+          });
+          i++;
+        }
+        content.push({ type: "orderedList", content: listItems });
+        continue;
+      }
+
+      // Code block
+      if (line.startsWith("```")) {
+        const lang = line.slice(3).trim();
+        const codeLines: string[] = [];
+        i++;
+        while (i < lines.length && !lines[i].startsWith("```")) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        i++; // Skip closing ```
+        content.push({
+          type: "codeBlock",
+          attrs: lang ? { language: lang } : {},
+          content: codeLines.length ? [{ type: "text", text: codeLines.join("\n") }] : [],
+        });
+        continue;
+      }
+
+      // Blockquote
+      if (line.startsWith(">")) {
+        const quoteLines: string[] = [];
+        while (i < lines.length && lines[i].startsWith(">")) {
+          quoteLines.push(lines[i].replace(/^>\s?/, ""));
+          i++;
+        }
+        content.push({
+          type: "blockquote",
+          content: [{ type: "paragraph", content: parseInlineMarks(quoteLines.join("\n")) }],
+        });
+        continue;
+      }
+
+      // Horizontal rule
+      if (line.match(/^[-*_]{3,}$/)) {
+        content.push({ type: "rule" });
+        i++;
+        continue;
+      }
+
+      // Regular paragraph - collect consecutive non-empty lines
+      const paraLines: string[] = [];
+      while (i < lines.length && lines[i].trim() &&
+             !lines[i].match(/^#{1,6}\s/) &&
+             !lines[i].match(/^\s*[\*\-]\s+/) &&
+             !lines[i].match(/^\s*\d+\.\s+/) &&
+             !lines[i].startsWith("```") &&
+             !lines[i].startsWith(">") &&
+             !lines[i].match(/^[-*_]{3,}$/)) {
+        paraLines.push(lines[i]);
+        i++;
+      }
+      if (paraLines.length > 0) {
+        content.push({
+          type: "paragraph",
+          content: parseInlineMarks(paraLines.join("\n")),
+        });
+      }
+    }
+
+    const adfDescription = {
+      type: "doc",
+      version: 1,
+      content: content.length > 0 ? content : [{ type: "paragraph", content: [] }],
+    };
+
+    await this.request(`/issue/${issueKey}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        fields: {
+          description: adfDescription,
+        },
+      }),
+    });
   }
 
   formatIssueForDisplay(issue: JiraIssue): string {

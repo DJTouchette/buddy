@@ -8,6 +8,7 @@ import { gitRoutes } from "./git";
 import { settingsRoutes } from "./settings";
 import { infraRoutes } from "./infra";
 import { jobsRoutes } from "./jobs";
+import { dashboardRoutes } from "./dashboard";
 
 export type { ApiContext, Services, ValidatedJiraConfig, ValidatedAzureConfig } from "./context";
 export { CACHE_KEY_TICKETS, CACHE_KEY_PRS } from "./context";
@@ -26,5 +27,6 @@ export function createApiRoutes(ctx: ApiContext) {
     ...settingsRoutes(ctx),
     ...infraRoutes({ cacheService: ctx.cacheService, jobService: ctx.jobService, configService: ctx.configService }),
     ...jobsRoutes({ cacheService: ctx.cacheService, jobService: ctx.jobService, configService: ctx.configService }),
+    ...dashboardRoutes(ctx),
   };
 }

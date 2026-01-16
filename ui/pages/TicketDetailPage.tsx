@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { ArrowLeft, ExternalLink, User, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X } from "lucide-react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { ArrowLeft, ExternalLink, User, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { JiraMarkdown } from "../components/JiraMarkdown";
 import { NotesEditor } from "../components/NotesEditor";
 import type { TicketWithPR } from "../../services/linkingService";
@@ -11,16 +11,22 @@ interface TicketDetailPageProps {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const badgeClass: Record<string, string> = {
-    "Done": "badge-green",
-    "In Progress": "badge-blue",
-    "Code Review": "badge-purple",
-    "To Do": "badge-gray",
-    "Blocked": "badge-red",
-  };
+  // Match workflow colors
+  const statusLower = status.toLowerCase();
+  let badgeClass = "badge-gray";
+
+  if (statusLower === "to do") badgeClass = "badge-status-gray";
+  else if (statusLower === "in progress") badgeClass = "badge-status-blue";
+  else if (statusLower === "code review") badgeClass = "badge-status-purple";
+  else if (statusLower.includes("pre-review") || statusLower.includes("merge")) badgeClass = "badge-status-indigo";
+  else if (statusLower === "qa (feature)" || statusLower === "qa feature") badgeClass = "badge-status-orange";
+  else if (statusLower === "qa (final)" || statusLower === "qa final") badgeClass = "badge-status-amber";
+  else if (statusLower === "po review") badgeClass = "badge-status-teal";
+  else if (statusLower === "done") badgeClass = "badge-status-green";
+  else if (statusLower === "blocked") badgeClass = "badge-status-red";
 
   return (
-    <span className={`badge ${badgeClass[status] || "badge-gray"}`}>
+    <span className={`badge ${badgeClass}`}>
       {status}
     </span>
   );
@@ -81,6 +87,112 @@ function AttachmentItem({ attachment }: { attachment: JiraAttachment }) {
   );
 }
 
+interface JiraTransition {
+  id: string;
+  name: string;
+  to: {
+    name: string;
+  };
+}
+
+interface WorkflowStatusBarProps {
+  currentStatus: string;
+  workflowStatuses: string[];
+  availableTransitions: JiraTransition[];
+  onTransition: (statusName: string) => void;
+  isTransitioning: boolean;
+}
+
+// Color classes for workflow steps (cycles through if more steps than colors)
+const WORKFLOW_COLORS = [
+  "workflow-color-gray",    // To Do
+  "workflow-color-blue",    // In Progress
+  "workflow-color-purple",  // Code Review
+  "workflow-color-indigo",  // Pre-Review
+  "workflow-color-orange",  // QA Feature
+  "workflow-color-amber",   // QA Final
+  "workflow-color-teal",    // PO Review
+  "workflow-color-green",   // Done
+];
+
+function WorkflowStatusBar({ currentStatus, workflowStatuses, availableTransitions, onTransition, isTransitioning }: WorkflowStatusBarProps) {
+  const currentIndex = workflowStatuses.findIndex(
+    (s) => s.toLowerCase() === currentStatus.toLowerCase()
+  );
+  const stepsRef = useRef<HTMLDivElement>(null);
+  const activeRef = useRef<HTMLButtonElement>(null);
+
+  // Scroll active step into view
+  useEffect(() => {
+    if (activeRef.current && stepsRef.current) {
+      activeRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "center",
+      });
+    }
+  }, [currentIndex]);
+
+  const availableStatusNames = availableTransitions.map((t) => t.to.name.toLowerCase());
+
+  const canGoBack = currentIndex > 0 && availableStatusNames.includes(workflowStatuses[currentIndex - 1].toLowerCase());
+  const canGoForward = currentIndex < workflowStatuses.length - 1 && availableStatusNames.includes(workflowStatuses[currentIndex + 1].toLowerCase());
+
+  const prevStatus = currentIndex > 0 ? workflowStatuses[currentIndex - 1] : null;
+  const nextStatus = currentIndex < workflowStatuses.length - 1 ? workflowStatuses[currentIndex + 1] : null;
+
+  return (
+    <div className="workflow-status-bar">
+      <button
+        className="btn-icon workflow-nav-btn"
+        onClick={() => prevStatus && onTransition(prevStatus)}
+        disabled={!canGoBack || isTransitioning}
+        title={prevStatus ? `Move to ${prevStatus}` : ""}
+      >
+        <ChevronLeft className="w-4 h-4" />
+      </button>
+
+      <div className="workflow-steps" ref={stepsRef}>
+        {workflowStatuses.map((status, index) => {
+          const isActive = index === currentIndex;
+          const isPast = index < currentIndex;
+          const isAvailable = availableStatusNames.includes(status.toLowerCase());
+          const colorClass = WORKFLOW_COLORS[index % WORKFLOW_COLORS.length];
+
+          return (
+            <button
+              key={status}
+              ref={isActive ? activeRef : null}
+              className={`workflow-step ${isActive ? "active" : ""} ${isPast ? "past" : ""} ${isAvailable && !isActive ? "available" : ""} ${colorClass}`}
+              onClick={() => isAvailable && !isActive && onTransition(status)}
+              disabled={!isAvailable || isActive || isTransitioning}
+              title={status}
+            >
+              <span className="workflow-step-dot" />
+              <span className="workflow-step-label">{status}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <button
+        className="btn-icon workflow-nav-btn"
+        onClick={() => nextStatus && onTransition(nextStatus)}
+        disabled={!canGoForward || isTransitioning}
+        title={nextStatus ? `Move to ${nextStatus}` : ""}
+      >
+        <ChevronRight className="w-4 h-4" />
+      </button>
+
+      {isTransitioning && (
+        <div className="workflow-loading">
+          <Loader2 className="w-4 h-4 animate-spin" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps) {
   const [ticket, setTicket] = useState<TicketWithPR | null>(null);
   const [jiraHost, setJiraHost] = useState("");
@@ -91,6 +203,13 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutResult, setCheckoutResult] = useState<{ success: boolean; message: string } | null>(null);
   const [currentBranch, setCurrentBranch] = useState<string | null>(null);
+  const [existingBranch, setExistingBranch] = useState<string | null>(null);
+
+  // Workflow transition state
+  const [transitions, setTransitions] = useState<JiraTransition[]>([]);
+  const [workflowStatuses, setWorkflowStatuses] = useState<string[]>([]);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [transitionError, setTransitionError] = useState<string | null>(null);
 
   const fetchTicket = useCallback(async () => {
     setLoading(true);
@@ -116,6 +235,8 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
     setShowBranchPicker(false);
     setDescriptionExpanded(false);
     setCurrentBranch(null);
+    setExistingBranch(null);
+    setTransitionError(null);
 
     fetch("/api/git/current-branch")
       .then(res => res.json())
@@ -126,6 +247,88 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
       })
       .catch(() => {});
   }, [ticketKey, fetchTicket]);
+
+  // Check for existing branch when ticket loads
+  useEffect(() => {
+    if (!ticket) return;
+
+    // Check for existing branch: first from linked PR, then from local git
+    if (ticket.linkedPR) {
+      // Use PR source branch
+      const prBranch = ticket.linkedPR.sourceRefName.replace("refs/heads/", "");
+      setExistingBranch(prBranch);
+    } else {
+      // Check for local branch matching ticket key
+      fetch(`/api/git/ticket-branch/${ticket.key}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.branch) {
+            setExistingBranch(data.branch);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [ticket]);
+
+  // Fetch transitions when ticket loads or status changes
+  useEffect(() => {
+    if (!ticket?.key) {
+      setTransitions([]);
+      setWorkflowStatuses([]);
+      return;
+    }
+
+    fetch(`/api/jira/tickets/${ticket.key}/transitions`)
+      .then((res) => res.json())
+      .then((data) => {
+        setTransitions(data.transitions || []);
+        setWorkflowStatuses(data.workflowStatuses || []);
+      })
+      .catch(() => {
+        setTransitions([]);
+        setWorkflowStatuses([]);
+      });
+  }, [ticket?.key, ticket?.fields.status.name]);
+
+  const handleTransition = async (statusName: string) => {
+    if (!ticket) return;
+
+    setIsTransitioning(true);
+    setTransitionError(null);
+
+    try {
+      const response = await fetch(`/api/jira/tickets/${ticket.key}/transition`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ statusName }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        // Update the ticket with new status
+        if (data.issue) {
+          setTicket({
+            ...ticket,
+            fields: {
+              ...ticket.fields,
+              status: data.issue.fields.status,
+            },
+          });
+        }
+        // Refresh transitions for new status
+        const transRes = await fetch(`/api/jira/tickets/${ticket.key}/transitions`);
+        const transData = await transRes.json();
+        setTransitions(transData.transitions || []);
+      } else {
+        setTransitionError(data.error || "Failed to transition ticket");
+      }
+    } catch (err) {
+      setTransitionError("Failed to transition ticket");
+    } finally {
+      setIsTransitioning(false);
+    }
+  };
 
   const handleTicketClick = (key: string) => {
     navigate(`/tickets/${key}`);
@@ -183,6 +386,47 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
     }
   };
 
+  // Checkout existing branch (from PR or local git)
+  const handleCheckoutExisting = async () => {
+    if (!existingBranch) return;
+
+    setCheckoutLoading(true);
+    setCheckoutResult(null);
+
+    try {
+      const response = await fetch("/api/git/checkout-pr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          branchName: existingBranch,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setCheckoutResult({
+          success: true,
+          message: `Checked out ${data.branchName} in ${data.repoName}`,
+        });
+        setCurrentBranch(data.branchName);
+        setTimeout(() => setCheckoutResult(null), 5000);
+      } else {
+        setCheckoutResult({
+          success: false,
+          message: data.error || "Checkout failed",
+        });
+      }
+    } catch (err) {
+      setCheckoutResult({
+        success: false,
+        message: "Failed to checkout branch",
+      });
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="text-center py-8 text-muted">
@@ -205,7 +449,9 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
   }
 
   const isCheckedOut = currentBranch?.toUpperCase().startsWith(ticket.key.toUpperCase());
-  const ticketUrl = `https://${jiraHost}/browse/${ticket.key}`;
+  // Ensure JIRA URL has protocol
+  const jiraBaseUrl = jiraHost.startsWith("http") ? jiraHost : `https://${jiraHost}`;
+  const ticketUrl = `${jiraBaseUrl}/browse/${ticket.key}`;
   const created = ticket.fields.created ? new Date(ticket.fields.created).toLocaleDateString() : "N/A";
   const updated = ticket.fields.updated ? new Date(ticket.fields.updated).toLocaleDateString() : "N/A";
 
@@ -235,29 +481,49 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
           <div className="detail-header-actions">
             {!isCheckedOut && (
               <div className="checkout-button-wrapper">
-                <button
-                  className="btn-secondary"
-                  onClick={() => setShowBranchPicker(!showBranchPicker)}
-                  disabled={checkoutLoading}
-                  title="Checkout branch for this ticket"
-                >
-                  {checkoutLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Download className="w-4 h-4" />
-                  )}
-                  Checkout
-                </button>
-                {showBranchPicker && (
-                  <div className="branch-picker">
-                    <div className="branch-picker-title">Branch from:</div>
-                    <button onClick={() => handleCheckout("master")} className="branch-picker-option">
-                      master
+                {existingBranch ? (
+                  // Existing branch found - checkout directly
+                  <button
+                    className="btn-secondary"
+                    onClick={handleCheckoutExisting}
+                    disabled={checkoutLoading}
+                    title={`Checkout ${existingBranch}`}
+                  >
+                    {checkoutLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4" />
+                    )}
+                    Checkout {existingBranch}
+                  </button>
+                ) : (
+                  // No existing branch - show branch picker
+                  <>
+                    <button
+                      className="btn-secondary"
+                      onClick={() => setShowBranchPicker(!showBranchPicker)}
+                      disabled={checkoutLoading}
+                      title="Create new branch for this ticket"
+                    >
+                      {checkoutLoading ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Download className="w-4 h-4" />
+                      )}
+                      Checkout
                     </button>
-                    <button onClick={() => handleCheckout("nextrelease")} className="branch-picker-option">
-                      nextrelease
-                    </button>
-                  </div>
+                    {showBranchPicker && (
+                      <div className="branch-picker">
+                        <div className="branch-picker-title">Branch from:</div>
+                        <button onClick={() => handleCheckout("master")} className="branch-picker-option">
+                          master
+                        </button>
+                        <button onClick={() => handleCheckout("nextrelease")} className="branch-picker-option">
+                          nextrelease
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
@@ -319,6 +585,25 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
             </DetailRow>
           )}
         </div>
+
+        {/* Workflow Status Bar */}
+        {workflowStatuses.length > 0 && (
+          <div className="workflow-section">
+            <WorkflowStatusBar
+              currentStatus={ticket.fields.status.name}
+              workflowStatuses={workflowStatuses}
+              availableTransitions={transitions}
+              onTransition={handleTransition}
+              isTransitioning={isTransitioning}
+            />
+            {transitionError && (
+              <div className="transition-error">
+                <AlertCircle className="w-4 h-4" />
+                {transitionError}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Linked PR */}
         {ticket.linkedPR && (

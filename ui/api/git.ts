@@ -1,4 +1,5 @@
 import type { ApiContext } from "./context";
+import { CACHE_KEY_PRS } from "./context";
 import { RepoService } from "../../services/repoService";
 
 // Base branches with descriptions
@@ -9,6 +10,192 @@ const BASE_BRANCH_INFO: Record<string, string> = {
 
 export function gitRoutes(ctx: ApiContext) {
   return {
+    // GET /api/git/pr-info - Get info needed for PR creation
+    "/api/git/pr-info": {
+      GET: async (req: Request) => {
+        try {
+          const selectedRepo = ctx.cacheService.getSelectedRepo();
+          if (!selectedRepo) {
+            return Response.json(
+              { error: "No repository selected. Go to Git page and select a repo first." },
+              { status: 400 }
+            );
+          }
+
+          const url = new URL(req.url);
+          const targetBranch = url.searchParams.get("target");
+
+          const repoService = new RepoService();
+          const currentBranch = await repoService.getCurrentBranch(selectedRepo.path);
+
+          if (!currentBranch) {
+            return Response.json({ error: "Could not determine current branch" }, { status: 500 });
+          }
+
+          // Get upstream/tracking branch
+          const upstreamBranch = await repoService.getUpstreamBranch(selectedRepo.path);
+
+          // Get remote branches for target selector
+          const remoteBranches = await repoService.getRemoteBranches(selectedRepo.path);
+
+          // Get base branches from config
+          const baseBranches = await ctx.configService.getBaseBranches();
+
+          // Get the parent branch (closest base branch the current branch was created from)
+          const parentBranch = await repoService.getParentBranch(selectedRepo.path, baseBranches);
+
+          // Check if branch is pushed
+          const isPushed = await repoService.isBranchPushed(selectedRepo.path, currentBranch);
+
+          // If target is specified, get the diff info
+          let changedFiles = null;
+          let commits = null;
+
+          if (targetBranch) {
+            changedFiles = await repoService.getChangedFiles(selectedRepo.path, targetBranch);
+            commits = await repoService.getCommits(selectedRepo.path, targetBranch);
+          }
+
+          return Response.json({
+            repo: selectedRepo,
+            currentBranch,
+            upstreamBranch,
+            parentBranch,
+            isPushed,
+            remoteBranches,
+            baseBranches,
+            targetBranch,
+            changedFiles,
+            commits,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // GET /api/git/diff - Get diff for a target branch
+    "/api/git/diff": {
+      GET: async (req: Request) => {
+        try {
+          const selectedRepo = ctx.cacheService.getSelectedRepo();
+          if (!selectedRepo) {
+            return Response.json({ error: "No repository selected" }, { status: 400 });
+          }
+
+          const url = new URL(req.url);
+          const targetBranch = url.searchParams.get("target");
+          const filePath = url.searchParams.get("file");
+
+          if (!targetBranch) {
+            return Response.json({ error: "Target branch is required" }, { status: 400 });
+          }
+
+          const repoService = new RepoService();
+
+          let diff: string | null;
+          if (filePath) {
+            diff = await repoService.getFileDiff(selectedRepo.path, targetBranch, filePath);
+          } else {
+            diff = await repoService.getDiff(selectedRepo.path, targetBranch);
+          }
+
+          if (diff === null) {
+            return Response.json({ error: "Failed to get diff" }, { status: 500 });
+          }
+
+          return Response.json({ diff });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // POST /api/git/push - Push current branch to remote
+    "/api/git/push": {
+      POST: async () => {
+        try {
+          const selectedRepo = ctx.cacheService.getSelectedRepo();
+          if (!selectedRepo) {
+            return Response.json({ error: "No repository selected" }, { status: 400 });
+          }
+
+          const repoService = new RepoService();
+          const currentBranch = await repoService.getCurrentBranch(selectedRepo.path);
+
+          if (!currentBranch) {
+            return Response.json({ error: "Could not determine current branch" }, { status: 500 });
+          }
+
+          const result = await repoService.pushBranch(selectedRepo.path, currentBranch);
+
+          if (!result.success) {
+            return Response.json({ error: result.error }, { status: 500 });
+          }
+
+          return Response.json({ success: true, branch: currentBranch });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // POST /api/git/create-pr - Create a pull request
+    "/api/git/create-pr": {
+      POST: async (req: Request) => {
+        try {
+          const selectedRepo = ctx.cacheService.getSelectedRepo();
+          if (!selectedRepo) {
+            return Response.json({ error: "No repository selected" }, { status: 400 });
+          }
+
+          const body = await req.json() as {
+            title: string;
+            description: string;
+            targetBranch: string;
+            isDraft: boolean;
+          };
+
+          if (!body.title || !body.targetBranch) {
+            return Response.json({ error: "Title and target branch are required" }, { status: 400 });
+          }
+
+          const repoService = new RepoService();
+          const currentBranch = await repoService.getCurrentBranch(selectedRepo.path);
+
+          if (!currentBranch) {
+            return Response.json({ error: "Could not determine current branch" }, { status: 500 });
+          }
+
+          // Make sure branch is pushed
+          const isPushed = await repoService.isBranchPushed(selectedRepo.path, currentBranch);
+          if (!isPushed) {
+            const pushResult = await repoService.pushBranch(selectedRepo.path, currentBranch);
+            if (!pushResult.success) {
+              return Response.json({ error: `Failed to push branch: ${pushResult.error}` }, { status: 500 });
+            }
+          }
+
+          // Create PR using Azure DevOps service
+          const { azureDevOpsService } = await ctx.getServices();
+          const pr = await azureDevOpsService.createPullRequest(
+            currentBranch,
+            body.targetBranch,
+            body.title,
+            body.description,
+            body.isDraft
+          );
+
+          // Invalidate PR cache
+          ctx.cacheService.invalidate(CACHE_KEY_PRS);
+
+          return Response.json({ success: true, pr });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
     // GET /api/git/base-branches - Get base branches with descriptions
     "/api/git/base-branches": {
       GET: async () => {
@@ -159,6 +346,35 @@ export function gitRoutes(ctx: ApiContext) {
             branchName: body.branchName,
             repoName: selectedRepo.name,
             repoPath: selectedRepo.path,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // GET /api/git/ticket-branch/:ticketKey - Find existing branch for ticket
+    "/api/git/ticket-branch/:ticketKey": {
+      GET: async (req: Request) => {
+        try {
+          const selectedRepo = ctx.cacheService.getSelectedRepo();
+          if (!selectedRepo) {
+            return Response.json({ branch: null, repo: null });
+          }
+
+          const url = new URL(req.url);
+          const ticketKey = url.pathname.split("/").pop();
+
+          if (!ticketKey) {
+            return Response.json({ error: "Missing ticket key" }, { status: 400 });
+          }
+
+          const repoService = new RepoService();
+          const branch = await repoService.findBranchForTicket(selectedRepo.path, ticketKey);
+
+          return Response.json({
+            branch,
+            repo: selectedRepo,
           });
         } catch (error) {
           return Response.json({ error: String(error) }, { status: 500 });

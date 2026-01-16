@@ -400,4 +400,278 @@ export class RepoService {
 
     return { success: true };
   }
+
+  /**
+   * Get the upstream tracking branch for the current branch
+   */
+  async getUpstreamBranch(repoPath: string): Promise<string | null> {
+    const output = await this.runGitCommand(
+      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+      repoPath
+    );
+    if (!output) return null;
+    // Returns something like "origin/master" - we want just "master"
+    const upstream = output.trim();
+    if (upstream.startsWith("origin/")) {
+      return upstream.replace("origin/", "");
+    }
+    return upstream;
+  }
+
+  /**
+   * Get the parent/base branch that the current branch was likely created from.
+   * Finds the closest base branch by checking merge-base distance.
+   */
+  async getParentBranch(repoPath: string, baseBranches: string[]): Promise<string | null> {
+    if (baseBranches.length === 0) return null;
+
+    // Get current branch
+    const currentBranch = await this.getCurrentBranch(repoPath);
+    if (!currentBranch) return null;
+
+    // Don't find parent if we're on a base branch
+    if (baseBranches.includes(currentBranch)) return null;
+
+    let closestBranch: string | null = null;
+    let closestDistance = Infinity;
+
+    for (const baseBranch of baseBranches) {
+      try {
+        // Get merge-base between current and base branch
+        const mergeBase = await this.runGitCommand(
+          ["merge-base", "HEAD", `origin/${baseBranch}`],
+          repoPath
+        );
+        if (!mergeBase) continue;
+
+        // Count commits from merge-base to current branch
+        const countOutput = await this.runGitCommand(
+          ["rev-list", "--count", `${mergeBase.trim()}..HEAD`],
+          repoPath
+        );
+        if (!countOutput) continue;
+
+        const distance = parseInt(countOutput.trim(), 10);
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestBranch = baseBranch;
+        }
+      } catch {
+        // Skip branches we can't compare
+      }
+    }
+
+    return closestBranch;
+  }
+
+  /**
+   * Get the merge base (common ancestor) between current branch and target
+   */
+  async getMergeBase(repoPath: string, targetBranch: string): Promise<string | null> {
+    const output = await this.runGitCommand(
+      ["merge-base", "HEAD", `origin/${targetBranch}`],
+      repoPath
+    );
+    return output?.trim() || null;
+  }
+
+  /**
+   * Get list of changed files between current branch and target
+   */
+  async getChangedFiles(repoPath: string, targetBranch: string): Promise<{
+    files: Array<{
+      path: string;
+      status: "added" | "modified" | "deleted" | "renamed";
+      insertions: number;
+      deletions: number;
+    }>;
+    totalInsertions: number;
+    totalDeletions: number;
+  } | null> {
+    // Get diff stat
+    const output = await this.runGitCommand(
+      ["diff", "--numstat", `origin/${targetBranch}...HEAD`],
+      repoPath,
+      60000
+    );
+    if (output === null) return null;
+
+    // Get file statuses
+    const statusOutput = await this.runGitCommand(
+      ["diff", "--name-status", `origin/${targetBranch}...HEAD`],
+      repoPath,
+      60000
+    );
+    if (statusOutput === null) return null;
+
+    const statusMap = new Map<string, "added" | "modified" | "deleted" | "renamed">();
+    for (const line of statusOutput.trim().split("\n").filter(Boolean)) {
+      const [status, ...pathParts] = line.split("\t");
+      const path = pathParts[pathParts.length - 1]; // Handle renamed files
+      const statusChar = status[0];
+      if (statusChar === "A") statusMap.set(path, "added");
+      else if (statusChar === "D") statusMap.set(path, "deleted");
+      else if (statusChar === "R") statusMap.set(path, "renamed");
+      else statusMap.set(path, "modified");
+    }
+
+    const files: Array<{
+      path: string;
+      status: "added" | "modified" | "deleted" | "renamed";
+      insertions: number;
+      deletions: number;
+    }> = [];
+
+    let totalInsertions = 0;
+    let totalDeletions = 0;
+
+    for (const line of output.trim().split("\n").filter(Boolean)) {
+      const [insertions, deletions, ...pathParts] = line.split("\t");
+      const path = pathParts.join("\t"); // Handle paths with tabs
+      const ins = insertions === "-" ? 0 : parseInt(insertions, 10);
+      const del = deletions === "-" ? 0 : parseInt(deletions, 10);
+
+      files.push({
+        path,
+        status: statusMap.get(path) || "modified",
+        insertions: ins,
+        deletions: del,
+      });
+
+      totalInsertions += ins;
+      totalDeletions += del;
+    }
+
+    return { files, totalInsertions, totalDeletions };
+  }
+
+  /**
+   * Get the full diff content between current branch and target
+   */
+  async getDiff(repoPath: string, targetBranch: string): Promise<string | null> {
+    const output = await this.runGitCommand(
+      ["diff", `origin/${targetBranch}...HEAD`],
+      repoPath,
+      120000 // 2 min timeout for large diffs
+    );
+    return output;
+  }
+
+  /**
+   * Get diff for a specific file
+   */
+  async getFileDiff(repoPath: string, targetBranch: string, filePath: string): Promise<string | null> {
+    const output = await this.runGitCommand(
+      ["diff", `origin/${targetBranch}...HEAD`, "--", filePath],
+      repoPath,
+      60000
+    );
+    return output;
+  }
+
+  /**
+   * Get commit list between current branch and target
+   */
+  async getCommits(repoPath: string, targetBranch: string): Promise<Array<{
+    hash: string;
+    shortHash: string;
+    subject: string;
+    author: string;
+    date: string;
+  }> | null> {
+    const output = await this.runGitCommand(
+      ["log", `origin/${targetBranch}..HEAD`, "--pretty=format:%H|%h|%s|%an|%ad", "--date=short"],
+      repoPath,
+      30000
+    );
+    if (output === null) return null;
+
+    const commits: Array<{
+      hash: string;
+      shortHash: string;
+      subject: string;
+      author: string;
+      date: string;
+    }> = [];
+
+    for (const line of output.trim().split("\n").filter(Boolean)) {
+      const [hash, shortHash, subject, author, date] = line.split("|");
+      commits.push({ hash, shortHash, subject, author, date });
+    }
+
+    return commits;
+  }
+
+  /**
+   * Check if branch has been pushed to remote
+   */
+  async isBranchPushed(repoPath: string, branchName: string): Promise<boolean> {
+    const output = await this.runGitCommand(
+      ["ls-remote", "--heads", "origin", branchName],
+      repoPath,
+      30000
+    );
+    return output !== null && output.trim().length > 0;
+  }
+
+  /**
+   * Push current branch to remote (with optional set-upstream)
+   */
+  async pushBranch(repoPath: string, branchName: string, setUpstream: boolean = true): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    const args = setUpstream
+      ? ["push", "-u", "origin", branchName]
+      : ["push", "origin", branchName];
+
+    const output = await this.runGitCommand(args, repoPath, 120000);
+    if (output === null) {
+      return { success: false, error: "Push timed out or failed" };
+    }
+    return { success: true };
+  }
+
+  /**
+   * Get list of all remote branches
+   */
+  async getRemoteBranches(repoPath: string): Promise<string[]> {
+    const output = await this.runGitCommand(
+      ["branch", "-r", "--format=%(refname:short)"],
+      repoPath
+    );
+    if (!output) return [];
+
+    return output
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((b) => b.replace("origin/", ""))
+      .filter((b) => !b.includes("HEAD"));
+  }
+
+  /**
+   * Get list of all local branches
+   */
+  async getLocalBranches(repoPath: string): Promise<string[]> {
+    const output = await this.runGitCommand(
+      ["branch", "--format=%(refname:short)"],
+      repoPath
+    );
+    if (!output) return [];
+
+    return output.trim().split("\n").filter(Boolean);
+  }
+
+  /**
+   * Find a local branch that starts with the given ticket key
+   */
+  async findBranchForTicket(repoPath: string, ticketKey: string): Promise<string | null> {
+    const branches = await this.getLocalBranches(repoPath);
+    const ticketKeyUpper = ticketKey.toUpperCase();
+
+    // Find branch that starts with ticket key (case-insensitive)
+    const match = branches.find((b) => b.toUpperCase().startsWith(ticketKeyUpper));
+    return match || null;
+  }
 }

@@ -58,5 +58,5 @@ export function useApi<T>(url: string) {
     }
   };
 
-  return { data, loading, error, refetch };
+  return { data, setData, loading, error, refetch };
 }

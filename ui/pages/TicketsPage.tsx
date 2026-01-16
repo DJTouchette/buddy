@@ -16,11 +16,34 @@ interface TicketsPageProps {
 
 type SortDirection = "asc" | "desc";
 
+// Parse URL search params into filter state
+function getFiltersFromURL(): {
+  search: string;
+  status: string;
+  assignee: string;
+  type: string;
+  sort: TicketSortField | null;
+  dir: SortDirection;
+} {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    search: params.get("q") || "",
+    status: params.get("status") || "all",
+    assignee: params.get("assignee") || "all",
+    type: params.get("type") || "all",
+    sort: (params.get("sort") as TicketSortField) || null,
+    dir: (params.get("dir") as SortDirection) || "asc",
+  };
+}
+
 export function TicketsPage({ navigate }: TicketsPageProps) {
-  const { data, loading, error, refetch } = useApi<TicketsResponse>("/api/tickets");
-  // Default to no sorting to preserve board rank order
-  const [sortField, setSortField] = useState<TicketSortField | null>(null);
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const { data, setData, loading, error, refetch } = useApi<TicketsResponse>("/api/tickets");
+
+  // Initialize state from URL
+  const initialFilters = useMemo(() => getFiltersFromURL(), []);
+
+  const [sortField, setSortField] = useState<TicketSortField | null>(initialFilters.sort);
+  const [sortDirection, setSortDirection] = useState<SortDirection>(initialFilters.dir);
   const [selectedTicket, setSelectedTicket] = useState<TicketWithPR | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [highlightedTicket, setHighlightedTicket] = useState<string | null>(null);
@@ -47,11 +70,28 @@ export function TicketsPage({ navigate }: TicketsPageProps) {
     return () => clearTimeout(timer);
   });
 
-  // Filter state
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
-  const [typeFilter, setTypeFilter] = useState<string>("all");
+  // Filter state - initialized from URL
+  const [searchQuery, setSearchQuery] = useState(initialFilters.search);
+  const [statusFilter, setStatusFilter] = useState<string>(initialFilters.status);
+  const [assigneeFilter, setAssigneeFilter] = useState<string>(initialFilters.assignee);
+  const [typeFilter, setTypeFilter] = useState<string>(initialFilters.type);
+
+  // Sync filter state to URL
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (searchQuery) params.set("q", searchQuery);
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (assigneeFilter !== "all") params.set("assignee", assigneeFilter);
+    if (typeFilter !== "all") params.set("type", typeFilter);
+    if (sortField) params.set("sort", sortField);
+    if (sortField && sortDirection !== "asc") params.set("dir", sortDirection);
+
+    const newURL = params.toString()
+      ? `${window.location.pathname}?${params.toString()}`
+      : window.location.pathname;
+
+    window.history.replaceState({}, "", newURL);
+  }, [searchQuery, statusFilter, assigneeFilter, typeFilter, sortField, sortDirection]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -63,11 +103,28 @@ export function TicketsPage({ navigate }: TicketsPageProps) {
     }
   };
 
+  // Handle ticket update from transitions
+  const handleTicketUpdate = useCallback((updatedTicket: TicketWithPR) => {
+    // Update the selected ticket
+    setSelectedTicket(updatedTicket);
+    // Update the ticket in the list without refetching
+    if (data) {
+      setData({
+        ...data,
+        tickets: data.tickets.map((t) =>
+          t.key === updatedTicket.key ? updatedTicket : t
+        ),
+      });
+    }
+  }, [data, setData]);
+
   const clearFilters = () => {
     setSearchQuery("");
     setStatusFilter("all");
     setAssigneeFilter("all");
     setTypeFilter("all");
+    setSortField(null);
+    setSortDirection("asc");
   };
 
   const hasActiveFilters = searchQuery || statusFilter !== "all" || assigneeFilter !== "all" || typeFilter !== "all";
@@ -353,6 +410,7 @@ export function TicketsPage({ navigate }: TicketsPageProps) {
         onTicketClick={handleTicketNavigate}
         onPRClick={handlePRClick}
         onOpenFullPage={handleOpenFullPage}
+        onTicketUpdate={handleTicketUpdate}
       />
     </div>
   );

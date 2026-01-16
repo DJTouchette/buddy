@@ -22,16 +22,22 @@ function SortIcon({ field, currentField, direction }: { field: TicketSortField; 
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const badgeClass: Record<string, string> = {
-    "Done": "badge-green",
-    "In Progress": "badge-blue",
-    "Code Review": "badge-purple",
-    "To Do": "badge-gray",
-    "Blocked": "badge-red",
-  };
+  // Match workflow colors
+  const statusLower = status.toLowerCase();
+  let badgeClass = "badge-gray";
+
+  if (statusLower === "to do") badgeClass = "badge-status-gray";
+  else if (statusLower === "in progress") badgeClass = "badge-status-blue";
+  else if (statusLower === "code review") badgeClass = "badge-status-purple";
+  else if (statusLower.includes("pre-review") || statusLower.includes("merge")) badgeClass = "badge-status-indigo";
+  else if (statusLower === "qa (feature)" || statusLower === "qa feature") badgeClass = "badge-status-orange";
+  else if (statusLower === "qa (final)" || statusLower === "qa final") badgeClass = "badge-status-amber";
+  else if (statusLower === "po review") badgeClass = "badge-status-teal";
+  else if (statusLower === "done") badgeClass = "badge-status-green";
+  else if (statusLower === "blocked") badgeClass = "badge-status-red";
 
   return (
-    <span className={`badge ${badgeClass[status] || "badge-gray"}`}>
+    <span className={`badge ${badgeClass}`}>
       {status}
     </span>
   );

@@ -151,6 +151,7 @@ export async function startUIServer(port: number) {
     routes: {
       // Serve React app for all non-API routes
       "/": index,
+      "/dashboard": index,
       "/tickets": index,
       "/tickets/*": index,  // Detail pages like /tickets/PROJ-123
       "/prs": index,

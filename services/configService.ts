@@ -3,12 +3,25 @@ import { parse, stringify } from "yaml";
 import { join } from "path";
 import { homedir } from "os";
 
+// Default JIRA workflow status sequence
+export const DEFAULT_JIRA_WORKFLOW = [
+  "To Do",
+  "In Progress",
+  "Code Review",
+  "Pre-Review/Merge to master",
+  "QA (Feature)",
+  "QA (Final)",
+  "PO Review",
+  "Done",
+];
+
 export interface BuddyConfig {
   jira?: {
     host?: string;
     email?: string;
     apiToken?: string;
     boardId?: number;
+    workflowStatuses?: string[];
   };
   git?: {
     baseBranches?: string[];
@@ -185,5 +198,16 @@ export class ConfigService {
 
   async setProtectedEnvironments(envs: string[]): Promise<void> {
     await this.setSettings({ protectedEnvironments: envs });
+  }
+
+  async getJiraWorkflowStatuses(): Promise<string[]> {
+    const config = await this.load();
+    return config.jira?.workflowStatuses ?? DEFAULT_JIRA_WORKFLOW;
+  }
+
+  async setJiraWorkflowStatuses(statuses: string[]): Promise<void> {
+    const config = await this.load();
+    config.jira = { ...config.jira, workflowStatuses: statuses };
+    await this.save(config);
   }
 }

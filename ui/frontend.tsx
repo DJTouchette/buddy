@@ -4,10 +4,12 @@ import "./styles.css";
 
 import { Layout } from "./components/Layout";
 import { SetupWizard } from "./components/SetupWizard";
+import { DashboardPage } from "./pages/DashboardPage";
 import { TicketsPage } from "./pages/TicketsPage";
 import { TicketDetailPage } from "./pages/TicketDetailPage";
 import { PRsPage } from "./pages/PRsPage";
 import { PRDetailPage } from "./pages/PRDetailPage";
+import { CreatePRPage } from "./pages/CreatePRPage";
 import { GitPage } from "./pages/GitPage";
 import { InfraPage } from "./pages/InfraPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -70,6 +72,11 @@ function App() {
       return <TicketDetailPage ticketKey={ticketMatch[1].toUpperCase()} navigate={navigate} />;
     }
 
+    // Check for PR creation page first (before /prs/:id)
+    if (currentPath === "/prs/create") {
+      return <CreatePRPage navigate={navigate} />;
+    }
+
     // Check for PR detail page: /prs/:id
     const prMatch = currentPath.match(/^\/prs\/(\d+)$/);
     if (prMatch) {
@@ -77,6 +84,11 @@ function App() {
     }
 
     switch (currentPath) {
+      case "/":
+      case "/dashboard":
+        return <DashboardPage navigate={navigate} />;
+      case "/tickets":
+        return <TicketsPage navigate={navigate} />;
       case "/prs":
         return <PRsPage navigate={navigate} />;
       case "/git":
@@ -85,10 +97,8 @@ function App() {
         return <InfraPage />;
       case "/settings":
         return <SettingsPage />;
-      case "/tickets":
-      case "/":
       default:
-        return <TicketsPage navigate={navigate} />;
+        return <DashboardPage navigate={navigate} />;
     }
   };
 

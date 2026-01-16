@@ -122,13 +122,71 @@ export function prsRoutes(ctx: ApiContext) {
       },
     },
 
-    // GET /api/prs/:id/statuses - Get PR statuses
+    // GET /api/prs/:id/statuses - Get PR statuses (policy evaluations)
     "/api/prs/:id/statuses": {
       GET: async (req: Request & { params: { id: string } }) => {
         try {
           const { azureDevOpsService } = await ctx.getServices();
-          const statuses = await azureDevOpsService.getPullRequestStatuses(parseInt(req.params.id));
-          return Response.json({ statuses });
+          const prId = parseInt(req.params.id);
+
+          // Get policy evaluations (build status, required reviewers, etc.)
+          const checks = await azureDevOpsService.getPRChecks(prId);
+
+          // Also get custom statuses if any
+          const customStatuses = await azureDevOpsService.getPullRequestStatuses(prId);
+
+          return Response.json({
+            checks,
+            statuses: customStatuses,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // PUT /api/prs/:id/description - Update PR description
+    "/api/prs/:id/description": {
+      PUT: async (req: Request & { params: { id: string } }) => {
+        try {
+          const { azureDevOpsService } = await ctx.getServices();
+          const body = await req.json();
+          const { description } = body;
+
+          if (typeof description !== "string") {
+            return Response.json({ error: "Description is required" }, { status: 400 });
+          }
+
+          const pr = await azureDevOpsService.updatePullRequestDescription(
+            parseInt(req.params.id),
+            description
+          );
+
+          // Invalidate PR cache since description changed
+          ctx.cacheService.invalidate(CACHE_KEY_PRS);
+
+          return Response.json({ success: true, pr });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // GET /api/prs/:id/comments - Get PR comments/threads
+    "/api/prs/:id/comments": {
+      GET: async (req: Request & { params: { id: string } }) => {
+        try {
+          const { azureDevOpsService } = await ctx.getServices();
+          const prId = parseInt(req.params.id);
+          const threads = await azureDevOpsService.getPRThreads(prId);
+
+          // Add thread URLs for linking to Azure DevOps
+          const threadsWithUrls = threads.map(thread => ({
+            ...thread,
+            webUrl: azureDevOpsService.getPRThreadUrl(prId, thread.id),
+          }));
+
+          return Response.json({ threads: threadsWithUrls, prId });
         } catch (error) {
           return Response.json({ error: String(error) }, { status: 500 });
         }

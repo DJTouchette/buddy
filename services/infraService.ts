@@ -96,6 +96,30 @@ export class InfraService {
   }
 
   /**
+   * Get AWS Console URL for a Lambda function
+   */
+  getLambdaConsoleUrl(functionName: string): string {
+    return `https://${this.region}.console.aws.amazon.com/lambda/home?region=${this.region}#/functions/${encodeURIComponent(functionName)}`;
+  }
+
+  /**
+   * Get AWS Console URL for Lambda function logs in CloudWatch
+   */
+  getLambdaLogsConsoleUrl(functionName: string): string {
+    const logGroupName = `/aws/lambda/${functionName}`;
+    // CloudWatch uses $252F for URL-encoded forward slashes
+    const encodedLogGroup = logGroupName.replace(/\//g, "$252F");
+    return `https://${this.region}.console.aws.amazon.com/cloudwatch/home?region=${this.region}#logsV2:log-groups/log-group/${encodedLogGroup}`;
+  }
+
+  /**
+   * Get the current AWS region
+   */
+  getRegion(): string {
+    return this.region;
+  }
+
+  /**
    * Derive infrastructure paths from a repository path
    */
   getInfraPaths(repoPath: string): { infraPath: string; backendPath: string } | null {

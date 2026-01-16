@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from "react";
-import { RefreshCw, Search, X } from "lucide-react";
+import { RefreshCw, Search, X, Plus } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { PRsTable, type PRSortField } from "../components/PRsTable";
 import { PRDetailModal } from "../components/PRDetailModal";
@@ -16,10 +16,34 @@ interface PRsPageProps {
 
 type SortDirection = "asc" | "desc";
 
+// Parse URL search params into filter state
+function getFiltersFromURL(): {
+  search: string;
+  status: string;
+  author: string;
+  target: string;
+  sort: PRSortField;
+  dir: SortDirection;
+} {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    search: params.get("q") || "",
+    status: params.get("status") || "all",
+    author: params.get("author") || "all",
+    target: params.get("target") || "all",
+    sort: (params.get("sort") as PRSortField) || "id",
+    dir: (params.get("dir") as SortDirection) || "desc",
+  };
+}
+
 export function PRsPage({ navigate }: PRsPageProps) {
-  const { data, loading, error, refetch } = useApi<PRsResponse>("/api/prs");
-  const [sortField, setSortField] = useState<PRSortField>("id");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const { data, setData, loading, error, refetch } = useApi<PRsResponse>("/api/prs");
+
+  // Initialize state from URL
+  const initialFilters = useMemo(() => getFiltersFromURL(), []);
+
+  const [sortField, setSortField] = useState<PRSortField>(initialFilters.sort);
+  const [sortDirection, setSortDirection] = useState<SortDirection>(initialFilters.dir);
   const [selectedPR, setSelectedPR] = useState<PRWithTicket | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [highlightedPR, setHighlightedPR] = useState<number | null>(null);
@@ -46,11 +70,28 @@ export function PRsPage({ navigate }: PRsPageProps) {
     return () => clearTimeout(timer);
   });
 
-  // Filter state
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [authorFilter, setAuthorFilter] = useState<string>("all");
-  const [targetFilter, setTargetFilter] = useState<string>("all");
+  // Filter state - initialized from URL
+  const [searchQuery, setSearchQuery] = useState(initialFilters.search);
+  const [statusFilter, setStatusFilter] = useState<string>(initialFilters.status);
+  const [authorFilter, setAuthorFilter] = useState<string>(initialFilters.author);
+  const [targetFilter, setTargetFilter] = useState<string>(initialFilters.target);
+
+  // Sync filter state to URL
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (searchQuery) params.set("q", searchQuery);
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (authorFilter !== "all") params.set("author", authorFilter);
+    if (targetFilter !== "all") params.set("target", targetFilter);
+    if (sortField !== "id") params.set("sort", sortField);
+    if (sortDirection !== "desc") params.set("dir", sortDirection);
+
+    const newURL = params.toString()
+      ? `${window.location.pathname}?${params.toString()}`
+      : window.location.pathname;
+
+    window.history.replaceState({}, "", newURL);
+  }, [searchQuery, statusFilter, authorFilter, targetFilter, sortField, sortDirection]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -67,6 +108,8 @@ export function PRsPage({ navigate }: PRsPageProps) {
     setStatusFilter("all");
     setAuthorFilter("all");
     setTargetFilter("all");
+    setSortField("id");
+    setSortDirection("desc");
   };
 
   const hasActiveFilters = searchQuery || statusFilter !== "all" || authorFilter !== "all" || targetFilter !== "all";
@@ -204,6 +247,21 @@ export function PRsPage({ navigate }: PRsPageProps) {
     navigate(`/prs/${prId}`);
   }, [navigate]);
 
+  // Handle PR update from description editing
+  const handlePRUpdate = useCallback((updatedPR: PRWithTicket) => {
+    // Update the selected PR
+    setSelectedPR(updatedPR);
+    // Update the PR in the list without refetching
+    if (data) {
+      setData({
+        ...data,
+        prs: data.prs.map((p) =>
+          p.pullRequestId === updatedPR.pullRequestId ? updatedPR : p
+        ),
+      });
+    }
+  }, [data, setData]);
+
   if (loading) {
     return (
       <div className="text-center py-8 text-muted">
@@ -234,10 +292,16 @@ export function PRsPage({ navigate }: PRsPageProps) {
             </span>
           )}
         </h1>
-        <button onClick={handleRefresh} disabled={refreshing} className="btn-primary flex items-center gap-2">
-          <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-          {refreshing ? "Refreshing..." : "Refresh"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => navigate("/prs/create")} className="btn-primary flex items-center gap-2">
+            <Plus className="w-4 h-4" />
+            Create PR
+          </button>
+          <button onClick={handleRefresh} disabled={refreshing} className="btn-secondary flex items-center gap-2">
+            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
       </div>
 
       {/* Filters Row */}
@@ -316,6 +380,7 @@ export function PRsPage({ navigate }: PRsPageProps) {
         onClose={() => setSelectedPR(null)}
         onTicketClick={handleTicketClick}
         onOpenFullPage={handleOpenFullPage}
+        onPRUpdate={handlePRUpdate}
       />
     </div>
   );
