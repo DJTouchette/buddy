@@ -1,8 +1,11 @@
 import { $ } from "bun";
 import * as path from "path";
 import * as os from "os";
+import * as fs from "fs";
 import type { JobService } from "./jobService";
 import type { LambdaInfo } from "./infraService";
+
+const isWindows = os.platform() === "win32";
 
 export interface BuildResult {
   name: string;
@@ -356,6 +359,103 @@ export class LambdaBuilderService {
   }
 
   /**
+   * Cross-platform: Remove directory recursively
+   */
+  private async rmDir(dirPath: string): Promise<void> {
+    try {
+      await fs.promises.rm(dirPath, { recursive: true, force: true });
+    } catch {
+      // Ignore errors (directory might not exist)
+    }
+  }
+
+  /**
+   * Cross-platform: Remove file
+   */
+  private async rmFile(filePath: string): Promise<void> {
+    try {
+      await fs.promises.unlink(filePath);
+    } catch {
+      // Ignore errors (file might not exist)
+    }
+  }
+
+  /**
+   * Cross-platform: Create directory
+   */
+  private async mkDir(dirPath: string): Promise<void> {
+    await fs.promises.mkdir(dirPath, { recursive: true });
+  }
+
+  /**
+   * Cross-platform: Copy directory recursively
+   */
+  private async copyDir(src: string, dest: string): Promise<void> {
+    await fs.promises.cp(src, dest, { recursive: true });
+  }
+
+  /**
+   * Cross-platform: Copy files matching a pattern
+   */
+  private async copyFiles(srcDir: string, destDir: string, extensions: string[]): Promise<void> {
+    try {
+      const files = await fs.promises.readdir(srcDir);
+      for (const file of files) {
+        const ext = path.extname(file).toLowerCase();
+        if (extensions.includes(ext)) {
+          const srcPath = path.join(srcDir, file);
+          const destPath = path.join(destDir, file);
+          const stat = await fs.promises.stat(srcPath);
+          if (stat.isFile()) {
+            await fs.promises.copyFile(srcPath, destPath);
+          }
+        }
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
+
+  /**
+   * Cross-platform: Create zip file
+   */
+  private async createZip(sourceDir: string, zipPath: string, output: (line: string) => void): Promise<void> {
+    if (isWindows) {
+      // Use PowerShell on Windows
+      const proc = Bun.spawn(
+        ["powershell", "-Command", `Compress-Archive -Path '${sourceDir}\\*' -DestinationPath '${zipPath}' -Force`],
+        { stdout: "pipe", stderr: "pipe" }
+      );
+      await this.streamOutput(proc, output);
+      if ((await proc.exited) !== 0) {
+        throw new Error("PowerShell Compress-Archive failed");
+      }
+    } else {
+      // Use zip on Unix
+      await $`cd ${sourceDir} && zip -rq ${zipPath} .`.quiet();
+    }
+  }
+
+  /**
+   * Cross-platform: Add files to existing zip
+   */
+  private async addToZip(sourceDir: string, zipPath: string, output: (line: string) => void): Promise<void> {
+    if (isWindows) {
+      // Use PowerShell to update archive
+      const proc = Bun.spawn(
+        ["powershell", "-Command", `Compress-Archive -Path '${sourceDir}\\*' -Update -DestinationPath '${zipPath}'`],
+        { stdout: "pipe", stderr: "pipe" }
+      );
+      await this.streamOutput(proc, output);
+      if ((await proc.exited) !== 0) {
+        throw new Error("PowerShell Compress-Archive update failed");
+      }
+    } else {
+      await $`cd ${sourceDir} && zip -rq ${zipPath} .`.quiet();
+    }
+  }
+
+  /**
    * Build a JS lambda (yarn install + zip)
    */
   private async buildJsLambda(lambda: LambdaInfo, output: (line: string) => void): Promise<void> {
@@ -364,7 +464,8 @@ export class LambdaBuilderService {
 
     // Clean up
     output(`> Cleaning up previous build...`);
-    await $`rm -rf ${tempDir} ${deploymentZip}`.quiet();
+    await this.rmDir(tempDir);
+    await this.rmFile(deploymentZip);
 
     // Install dependencies
     output(`> yarn install --frozen-lockfile`);
@@ -382,20 +483,59 @@ export class LambdaBuilderService {
 
     // Create temp directory and copy files
     output(`> Preparing deployment package...`);
-    await $`mkdir -p ${tempDir}`.quiet();
+    await this.mkDir(tempDir);
 
-    // Copy source files
-    await $`cp -r ${lambda.path}/*.js ${lambda.path}/*.json ${tempDir}/ 2>/dev/null || true`.quiet();
-    await $`cp -r ${lambda.path}/node_modules ${tempDir}/`.quiet();
+    // Copy source files (.js and .json)
+    await this.copyFiles(lambda.path, tempDir, [".js", ".json"]);
+
+    // Copy node_modules
+    const nodeModulesSrc = path.join(lambda.path, "node_modules");
+    const nodeModulesDest = path.join(tempDir, "node_modules");
+    if (fs.existsSync(nodeModulesSrc)) {
+      await this.copyDir(nodeModulesSrc, nodeModulesDest);
+    }
 
     // Create zip
     output(`> Creating deployment.zip...`);
-    await $`cd ${tempDir} && zip -rq ../deployment.zip .`.quiet();
+    await this.createZip(tempDir, deploymentZip, output);
 
     // Clean up temp
-    await $`rm -rf ${tempDir}`.quiet();
+    await this.rmDir(tempDir);
 
     output(`> Deployment package created: ${deploymentZip}`);
+  }
+
+  /**
+   * Cross-platform: Copy directory excluding certain patterns
+   */
+  private async copyDirExcluding(
+    src: string,
+    dest: string,
+    excludePatterns: string[]
+  ): Promise<void> {
+    const entries = await fs.promises.readdir(src, { withFileTypes: true });
+
+    for (const entry of entries) {
+      // Check if should exclude
+      const shouldExclude = excludePatterns.some((pattern) => {
+        if (pattern.startsWith("*.")) {
+          return entry.name.endsWith(pattern.slice(1));
+        }
+        return entry.name === pattern;
+      });
+
+      if (shouldExclude) continue;
+
+      const srcPath = path.join(src, entry.name);
+      const destPath = path.join(dest, entry.name);
+
+      if (entry.isDirectory()) {
+        await this.mkDir(destPath);
+        await this.copyDirExcluding(srcPath, destPath, excludePatterns);
+      } else {
+        await fs.promises.copyFile(srcPath, destPath);
+      }
+    }
   }
 
   /**
@@ -407,25 +547,23 @@ export class LambdaBuilderService {
 
     // Clean up
     output(`> Cleaning up previous build...`);
-    await $`rm -rf ${stageDir} ${deploymentZip}`.quiet();
+    await this.rmDir(stageDir);
+    await this.rmFile(deploymentZip);
 
     // Create stage directory
-    await $`mkdir -p ${stageDir}`.quiet();
+    await this.mkDir(stageDir);
 
     // Copy files (excluding unwanted)
     output(`> Copying Python files...`);
-    await $`rsync -a --exclude='.stage' --exclude='.venv' --exclude='__pycache__' --exclude='.git' --exclude='requirements.txt' --exclude='deployment.zip' --exclude='*.pyc' ${lambda.path}/ ${stageDir}/`.quiet();
-
-    // Remove any pycache that slipped through
-    await $`find ${stageDir} -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true`.quiet();
-    await $`find ${stageDir} -name '*.pyc' -delete 2>/dev/null || true`.quiet();
+    const excludePatterns = [".stage", ".venv", "__pycache__", ".git", "requirements.txt", "deployment.zip", "*.pyc"];
+    await this.copyDirExcluding(lambda.path, stageDir, excludePatterns);
 
     // Create zip
     output(`> Creating deployment.zip...`);
-    await $`cd ${stageDir} && zip -rq ../deployment.zip .`.quiet();
+    await this.createZip(stageDir, deploymentZip, output);
 
     // Clean up
-    await $`rm -rf ${stageDir}`.quiet();
+    await this.rmDir(stageDir);
 
     output(`> Deployment package created: ${deploymentZip}`);
   }
@@ -436,12 +574,14 @@ export class LambdaBuilderService {
   private async buildTypescriptEdgeLambda(lambda: LambdaInfo, output: (line: string) => void): Promise<void> {
     const packagedDir = path.join(lambda.path, "packaged");
     const deploymentZip = path.join(packagedDir, "deployment.zip");
+    const tempDir = path.join(lambda.path, ".ts_edge_temp");
 
     // Ensure packaged directory exists
-    await $`mkdir -p ${packagedDir}`.quiet();
+    await this.mkDir(packagedDir);
 
     // Clean up previous deployment
-    await $`rm -f ${deploymentZip}`.quiet();
+    await this.rmFile(deploymentZip);
+    await this.rmDir(tempDir);
 
     // Install all dependencies
     output(`> yarn install`);
@@ -465,7 +605,7 @@ export class LambdaBuilderService {
 
     // Remove node_modules, reinstall production only
     output(`> Installing production dependencies only...`);
-    await $`rm -rf ${lambda.path}/node_modules`.quiet();
+    await this.rmDir(path.join(lambda.path, "node_modules"));
 
     proc = Bun.spawn(["yarn", "install", "--production"], {
       cwd: lambda.path,
@@ -475,14 +615,28 @@ export class LambdaBuilderService {
     await this.streamOutput(proc, output);
     if ((await proc.exited) !== 0) throw new Error("yarn production install failed");
 
+    // Create temp directory with both node_modules and compiled source
+    output(`> Preparing deployment package...`);
+    await this.mkDir(tempDir);
+
+    // Copy node_modules to temp
+    const nodeModulesSrc = path.join(lambda.path, "node_modules");
+    if (fs.existsSync(nodeModulesSrc)) {
+      await this.copyDir(nodeModulesSrc, path.join(tempDir, "node_modules"));
+    }
+
+    // Copy compiled source to temp
+    const buildSrcDir = path.join(lambda.path, "build", "src");
+    if (fs.existsSync(buildSrcDir)) {
+      await this.copyDir(buildSrcDir, path.join(tempDir, "src"));
+    }
+
     // Create deployment zip
     output(`> Creating deployment.zip...`);
+    await this.createZip(tempDir, deploymentZip, output);
 
-    // Add node_modules to zip
-    await $`cd ${lambda.path} && zip -rq ${deploymentZip} node_modules`.quiet();
-
-    // Add compiled source to zip
-    await $`cd ${lambda.path}/build && zip -rq ${deploymentZip} src`.quiet();
+    // Clean up temp
+    await this.rmDir(tempDir);
 
     // Restore dev dependencies
     output(`> Restoring dev dependencies...`);
