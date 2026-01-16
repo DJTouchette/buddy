@@ -389,9 +389,9 @@ async function executeCdkJob(
   ctx.jobService.appendOutput(jobId, `Infrastructure path: ${infraPath}`);
 
   try {
-    // Get current environment
-    const currentEnv = ctx.cacheService.getCurrentEnvironment();
-    const stage = ctx.cacheService.getInfraStage();
+    // Get current environment from configService (stores in buddy.json)
+    const currentEnv = await ctx.configService.getCurrentEnvironment();
+    const stage = await ctx.configService.getInfraStage();
 
     if (!currentEnv) {
       throw new Error("No environment selected. Please select an environment first.");
@@ -597,7 +597,7 @@ async function executeDeployLambdaJob(
       ctx.jobService.updateJobStatus(jobId, "completed");
 
       // Invalidate AWS lambdas cache so next fetch gets fresh data
-      const currentEnv = ctx.cacheService.getCurrentEnvironment();
+      const currentEnv = await ctx.configService.getCurrentEnvironment();
       if (currentEnv) {
         ctx.cacheService.invalidate(`aws-lambdas-${currentEnv}`);
       }
