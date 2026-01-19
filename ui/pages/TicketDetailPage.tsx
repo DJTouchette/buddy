@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { ArrowLeft, ExternalLink, User, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X, ChevronLeft, ChevronRight, UserPlus } from "lucide-react";
+import { ArrowLeft, ExternalLink, User, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X, ChevronLeft, ChevronRight, UserPlus, UserMinus } from "lucide-react";
 import { JiraMarkdown } from "../components/JiraMarkdown";
 import { NotesEditor } from "../components/NotesEditor";
 import type { TicketWithPR } from "../../services/linkingService";
@@ -363,6 +363,36 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
     }
   };
 
+  const handleUnassign = async () => {
+    if (!ticket) return;
+
+    setIsAssigning(true);
+    try {
+      const response = await fetch(`/api/jira/tickets/${ticket.key}/unassign`, {
+        method: "POST",
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        // Update the ticket with no assignee
+        if (data.issue) {
+          setTicket({
+            ...ticket,
+            fields: {
+              ...ticket.fields,
+              assignee: data.issue.fields.assignee,
+            },
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to unassign ticket:", err);
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
   const handleTicketClick = (key: string) => {
     navigate(`/tickets/${key}`);
   };
@@ -588,7 +618,7 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
           <DetailRow icon={User} label="Assignee">
             <div className="assignee-row">
               <span>{ticket.fields.assignee?.displayName || "Unassigned"}</span>
-              {!ticket.fields.assignee && (
+              {!ticket.fields.assignee ? (
                 <button
                   className="btn-sm btn-secondary"
                   onClick={handleAssignToSelf}
@@ -601,6 +631,20 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
                     <UserPlus className="w-3 h-3" />
                   )}
                   Assign to me
+                </button>
+              ) : (
+                <button
+                  className="btn-sm btn-secondary"
+                  onClick={handleUnassign}
+                  disabled={isAssigning}
+                  title="Unassign"
+                >
+                  {isAssigning ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <UserMinus className="w-3 h-3" />
+                  )}
+                  Unassign
                 </button>
               )}
             </div>

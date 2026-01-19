@@ -245,6 +245,31 @@ export function prsRoutes(ctx: ApiContext) {
           return Response.json({ error: String(error) }, { status: 500 });
         }
       },
+      DELETE: async (req: Request & { params: { id: string } }) => {
+        try {
+          const { azureDevOpsService } = await ctx.getServices();
+          const prId = parseInt(req.params.id);
+
+          // Get current user's ID
+          const currentUser = await azureDevOpsService.getCurrentUser();
+
+          // Remove self as reviewer
+          await azureDevOpsService.removeReviewer(prId, currentUser.id);
+
+          // Get updated PR
+          const pr = await azureDevOpsService.getPullRequest(prId);
+
+          // Invalidate cache since reviewers changed
+          ctx.cacheService.invalidate(CACHE_KEY_PRS);
+
+          return Response.json({
+            success: true,
+            pr,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
     },
 
     // DELETE /api/prs/:id/reviewers/:reviewerId - Remove a reviewer from PR

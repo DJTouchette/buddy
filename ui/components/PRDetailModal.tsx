@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ExternalLink, GitBranch, GitMerge, User, UserPlus, Users, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X, Expand, Maximize2, Minimize2, Pencil, Save, AlertCircle, ThumbsUp, ThumbsDown, MinusCircle } from "lucide-react";
+import { ExternalLink, GitBranch, GitMerge, User, UserPlus, UserMinus, Users, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X, Expand, Maximize2, Minimize2, Pencil, Save, AlertCircle, ThumbsUp, ThumbsDown, MinusCircle } from "lucide-react";
 import { Modal } from "./Modal";
 import { NotesEditor } from "./NotesEditor";
 import { Markdown } from "./Markdown";
@@ -158,6 +158,7 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
 
   // Reviewer state
   const [isAddingReviewer, setIsAddingReviewer] = useState(false);
+  const [isRemovingReviewer, setIsRemovingReviewer] = useState(false);
 
   useEffect(() => {
     if (pr) {
@@ -314,6 +315,33 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
     }
   };
 
+  const handleRemoveSelfAsReviewer = async () => {
+    setIsRemovingReviewer(true);
+
+    try {
+      const response = await fetch(`/api/prs/${pr.pullRequestId}/reviewers/self`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        // Update the PR with new reviewers
+        if (data.pr && onPRUpdate) {
+          onPRUpdate({
+            ...pr,
+            reviewers: data.pr.reviewers,
+          });
+        }
+      }
+    } catch (err) {
+      // Silently fail - user can try again
+    } finally {
+      setIsRemovingReviewer(false);
+    }
+  };
+
   const titleExtra = isCheckedOut ? (
     <div className="checked-out-badge">
       <Check className="w-4 h-4" />
@@ -414,7 +442,7 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
               <button
                 className="btn-sm btn-secondary"
                 onClick={handleAddSelfAsReviewer}
-                disabled={isAddingReviewer}
+                disabled={isAddingReviewer || isRemovingReviewer}
                 title="Add yourself as a reviewer"
               >
                 {isAddingReviewer ? (
@@ -423,6 +451,19 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
                   <UserPlus className="w-3 h-3" />
                 )}
                 Add myself
+              </button>
+              <button
+                className="btn-sm btn-secondary"
+                onClick={handleRemoveSelfAsReviewer}
+                disabled={isAddingReviewer || isRemovingReviewer}
+                title="Remove yourself as a reviewer"
+              >
+                {isRemovingReviewer ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <UserMinus className="w-3 h-3" />
+                )}
+                Remove myself
               </button>
             </div>
           </div>

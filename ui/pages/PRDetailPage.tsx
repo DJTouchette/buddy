@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { ArrowLeft, ExternalLink, GitBranch, GitMerge, User, UserPlus, Users, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X, Maximize2, Minimize2, Pencil, Save, AlertCircle, MessageSquare, Code, ThumbsUp, ThumbsDown, MinusCircle } from "lucide-react";
+import { ArrowLeft, ExternalLink, GitBranch, GitMerge, User, UserPlus, UserMinus, Users, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X, Maximize2, Minimize2, Pencil, Save, AlertCircle, MessageSquare, Code, ThumbsUp, ThumbsDown, MinusCircle } from "lucide-react";
 import { NotesEditor } from "../components/NotesEditor";
 import { Markdown } from "../components/Markdown";
 import type { PRWithTicket } from "../../services/linkingService";
@@ -186,6 +186,7 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
 
   // Reviewer state
   const [isAddingReviewer, setIsAddingReviewer] = useState(false);
+  const [isRemovingReviewer, setIsRemovingReviewer] = useState(false);
 
   const fetchPR = useCallback(async () => {
     setLoading(true);
@@ -384,6 +385,33 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
     }
   };
 
+  const handleRemoveSelfAsReviewer = async () => {
+    if (!pr) return;
+
+    setIsRemovingReviewer(true);
+
+    try {
+      const response = await fetch(`/api/prs/${pr.pullRequestId}/reviewers/self`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        // Update the PR with new reviewers
+        setPr({
+          ...pr,
+          reviewers: data.pr.reviewers,
+        });
+      }
+    } catch (err) {
+      // Silently fail - user can try again
+    } finally {
+      setIsRemovingReviewer(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="text-center py-8 text-muted">
@@ -509,7 +537,7 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
               <button
                 className="btn-sm btn-secondary"
                 onClick={handleAddSelfAsReviewer}
-                disabled={isAddingReviewer}
+                disabled={isAddingReviewer || isRemovingReviewer}
                 title="Add yourself as a reviewer"
               >
                 {isAddingReviewer ? (
@@ -518,6 +546,19 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
                   <UserPlus className="w-3 h-3" />
                 )}
                 Add myself
+              </button>
+              <button
+                className="btn-sm btn-secondary"
+                onClick={handleRemoveSelfAsReviewer}
+                disabled={isAddingReviewer || isRemovingReviewer}
+                title="Remove yourself as a reviewer"
+              >
+                {isRemovingReviewer ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <UserMinus className="w-3 h-3" />
+                )}
+                Remove myself
               </button>
             </div>
           </div>

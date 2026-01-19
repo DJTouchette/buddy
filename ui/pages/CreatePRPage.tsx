@@ -518,6 +518,29 @@ ${prTitle}`;
         </div>
       )}
 
+      {/* Warning if branch not pushed */}
+      {!isBaseBranch && !prInfo.isPushed && (
+        <div className="alert alert-info">
+          <Upload className="w-5 h-5" />
+          <div className="alert-content">
+            <strong>Branch not pushed to remote</strong>
+            <span>You need to push your branch before creating a PR. Click "Push Branch" below or use the button here.</span>
+          </div>
+          <button
+            className="btn-primary btn-sm"
+            onClick={handlePush}
+            disabled={isPushing}
+          >
+            {isPushing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Upload className="w-4 h-4" />
+            )}
+            Push Now
+          </button>
+        </div>
+      )}
+
       {/* Details Tab Content */}
       {mainTab === "details" && (
         <div className="pr-details-content">

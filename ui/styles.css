@@ -2648,6 +2648,66 @@ a:hover {
   color: #22c55e;
 }
 
+/* Branch Tab Content */
+.branch-tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.branch-info-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.branch-info-name {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.branch-info-name code {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.branch-parent-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.875rem;
+}
+
+.branch-parent-info code {
+  font-weight: 500;
+}
+
+.settings-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.form-select-sm {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8125rem;
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  color: var(--foreground);
+}
+
+/* Git page with branch tab needs more width */
+.git-page:has(.branch-tab-content) {
+  max-width: 90rem;
+}
+
 /* Repo Selector in Navbar */
 .repo-selector {
   display: flex;
@@ -4813,6 +4873,33 @@ a:hover {
 :root.dark .alert-warning {
   background: rgba(234, 179, 8, 0.15);
   color: #fbbf24;
+}
+
+.alert-info {
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+:root.dark .alert-info {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+}
+
+.alert-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 0.25rem;
+}
+
+.alert-content strong {
+  font-weight: 600;
+}
+
+.alert-content span {
+  font-size: 0.8125rem;
+  opacity: 0.9;
 }
 
 /* Badge small */
