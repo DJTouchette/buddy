@@ -217,6 +217,29 @@ export class JiraService {
     return true;
   }
 
+  async getCurrentUser(): Promise<{ accountId: string; displayName: string; emailAddress: string }> {
+    return this.request<{ accountId: string; displayName: string; emailAddress: string }>("/myself");
+  }
+
+  async assignIssue(issueKey: string, accountId: string | null): Promise<void> {
+    await this.request(`/issue/${issueKey}/assignee`, {
+      method: "PUT",
+      body: JSON.stringify({
+        accountId,
+      }),
+    });
+  }
+
+  async assignToSelf(issueKey: string): Promise<{ displayName: string }> {
+    const currentUser = await this.getCurrentUser();
+    await this.assignIssue(issueKey, currentUser.accountId);
+    return { displayName: currentUser.displayName };
+  }
+
+  async unassignIssue(issueKey: string): Promise<void> {
+    await this.assignIssue(issueKey, null);
+  }
+
   async updateIssueDescription(issueKey: string, description: string): Promise<void> {
     // Convert markdown to ADF (Atlassian Document Format)
     const content: any[] = [];

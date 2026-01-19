@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { ArrowLeft, ExternalLink, User, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, ExternalLink, User, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X, ChevronLeft, ChevronRight, UserPlus } from "lucide-react";
 import { JiraMarkdown } from "../components/JiraMarkdown";
 import { NotesEditor } from "../components/NotesEditor";
 import type { TicketWithPR } from "../../services/linkingService";
@@ -211,6 +211,9 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionError, setTransitionError] = useState<string | null>(null);
 
+  // Assignment state
+  const [isAssigning, setIsAssigning] = useState(false);
+
   const fetchTicket = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -327,6 +330,36 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
       setTransitionError("Failed to transition ticket");
     } finally {
       setIsTransitioning(false);
+    }
+  };
+
+  const handleAssignToSelf = async () => {
+    if (!ticket) return;
+
+    setIsAssigning(true);
+    try {
+      const response = await fetch(`/api/jira/tickets/${ticket.key}/assign-self`, {
+        method: "POST",
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        // Update the ticket with new assignee
+        if (data.issue) {
+          setTicket({
+            ...ticket,
+            fields: {
+              ...ticket.fields,
+              assignee: data.issue.fields.assignee,
+            },
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to assign ticket:", err);
+    } finally {
+      setIsAssigning(false);
     }
   };
 
@@ -553,7 +586,24 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
         {/* Details Grid */}
         <div className="detail-grid">
           <DetailRow icon={User} label="Assignee">
-            {ticket.fields.assignee?.displayName || "Unassigned"}
+            <div className="assignee-row">
+              <span>{ticket.fields.assignee?.displayName || "Unassigned"}</span>
+              {!ticket.fields.assignee && (
+                <button
+                  className="btn-sm btn-secondary"
+                  onClick={handleAssignToSelf}
+                  disabled={isAssigning}
+                  title="Assign to me"
+                >
+                  {isAssigning ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <UserPlus className="w-3 h-3" />
+                  )}
+                  Assign to me
+                </button>
+              )}
+            </div>
           </DetailRow>
 
           <DetailRow icon={Calendar} label="Created">

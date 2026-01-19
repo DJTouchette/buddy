@@ -280,5 +280,56 @@ export function jiraRoutes(ctx: ApiContext) {
         }
       },
     },
+
+    // POST /api/jira/tickets/:key/assign-self - Assign ticket to current user
+    "/api/jira/tickets/:key/assign-self": {
+      POST: async (req: Request & { params: { key: string } }) => {
+        try {
+          const { jiraService } = await ctx.getServices();
+          const issueKey = req.params.key;
+
+          const result = await jiraService.assignToSelf(issueKey);
+
+          // Get the updated issue
+          const updatedIssue = await jiraService.getIssue(issueKey);
+
+          // Invalidate cache since ticket assignment changed
+          ctx.cacheService.invalidate("tickets");
+
+          return Response.json({
+            success: true,
+            assignee: result.displayName,
+            issue: updatedIssue,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // POST /api/jira/tickets/:key/unassign - Unassign ticket
+    "/api/jira/tickets/:key/unassign": {
+      POST: async (req: Request & { params: { key: string } }) => {
+        try {
+          const { jiraService } = await ctx.getServices();
+          const issueKey = req.params.key;
+
+          await jiraService.unassignIssue(issueKey);
+
+          // Get the updated issue
+          const updatedIssue = await jiraService.getIssue(issueKey);
+
+          // Invalidate cache since ticket assignment changed
+          ctx.cacheService.invalidate("tickets");
+
+          return Response.json({
+            success: true,
+            issue: updatedIssue,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
   };
 }

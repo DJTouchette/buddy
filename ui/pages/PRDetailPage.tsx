@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { ArrowLeft, ExternalLink, GitBranch, GitMerge, User, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X, Maximize2, Minimize2, Pencil, Save, AlertCircle, MessageSquare, Code, ThumbsUp, ThumbsDown, MinusCircle } from "lucide-react";
+import { ArrowLeft, ExternalLink, GitBranch, GitMerge, User, UserPlus, Users, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X, Maximize2, Minimize2, Pencil, Save, AlertCircle, MessageSquare, Code, ThumbsUp, ThumbsDown, MinusCircle } from "lucide-react";
 import { NotesEditor } from "../components/NotesEditor";
 import { Markdown } from "../components/Markdown";
 import type { PRWithTicket } from "../../services/linkingService";
@@ -184,6 +184,9 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
   const [comments, setComments] = useState<PRThread[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
 
+  // Reviewer state
+  const [isAddingReviewer, setIsAddingReviewer] = useState(false);
+
   const fetchPR = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -354,6 +357,33 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
     }
   };
 
+  const handleAddSelfAsReviewer = async () => {
+    if (!pr) return;
+
+    setIsAddingReviewer(true);
+
+    try {
+      const response = await fetch(`/api/prs/${pr.pullRequestId}/reviewers/self`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        // Update the PR with new reviewers
+        setPr({
+          ...pr,
+          reviewers: data.pr.reviewers,
+        });
+      }
+    } catch (err) {
+      // Silently fail - user can try again
+    } finally {
+      setIsAddingReviewer(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="text-center py-8 text-muted">
@@ -464,6 +494,61 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
           <DetailRow icon={GitMerge} label="Target Branch">
             <code>{targetBranch}</code>
           </DetailRow>
+        </div>
+
+        {/* Reviewers Section */}
+        <div className="detail-section">
+          <div className="detail-section-header">
+            <h4 className="detail-section-title">
+              <Users className="w-4 h-4" /> Reviewers
+              {pr.reviewers && pr.reviewers.length > 0 && (
+                <span className="badge badge-sm ml-2">{pr.reviewers.filter(r => !r.isContainer).length}</span>
+              )}
+            </h4>
+            <div className="detail-section-actions">
+              <button
+                className="btn-sm btn-secondary"
+                onClick={handleAddSelfAsReviewer}
+                disabled={isAddingReviewer}
+                title="Add yourself as a reviewer"
+              >
+                {isAddingReviewer ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <UserPlus className="w-3 h-3" />
+                )}
+                Add myself
+              </button>
+            </div>
+          </div>
+          {pr.reviewers && pr.reviewers.filter(r => !r.isContainer).length > 0 ? (
+            <div className="reviewer-list">
+              {pr.reviewers.filter(r => !r.isContainer).map((reviewer) => (
+                <div key={reviewer.id} className="reviewer-item">
+                  <User className="w-4 h-4" />
+                  <span className="reviewer-name">{reviewer.displayName}</span>
+                  <span className={`badge badge-sm ${
+                    reviewer.vote >= 10 ? "badge-green" :
+                    reviewer.vote >= 5 ? "badge-blue" :
+                    reviewer.vote === -5 ? "badge-yellow" :
+                    reviewer.vote === -10 ? "badge-red" :
+                    "badge-gray"
+                  }`}>
+                    {reviewer.vote >= 10 ? "Approved" :
+                     reviewer.vote >= 5 ? "Approved with suggestions" :
+                     reviewer.vote === -5 ? "Waiting for author" :
+                     reviewer.vote === -10 ? "Rejected" :
+                     "No vote"}
+                  </span>
+                  {reviewer.isRequired && (
+                    <span className="text-xs text-muted">(required)</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-muted">No reviewers assigned</div>
+          )}
         </div>
 
         {/* Linked Ticket */}

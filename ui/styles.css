@@ -896,6 +896,38 @@ a:hover {
   border-radius: 0.25rem;
 }
 
+.assignee-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.assignee-row .btn-sm {
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+/* Reviewer list */
+.reviewer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.reviewer-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--muted);
+  border-radius: 0.375rem;
+}
+
+.reviewer-name {
+  flex: 1;
+  font-size: 0.875rem;
+}
+
 .detail-section {
   display: flex;
   flex-direction: column;

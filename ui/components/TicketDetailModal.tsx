@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { ExternalLink, User, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X, Expand, ChevronLeft, ChevronRight, Pencil, Save } from "lucide-react";
+import { ExternalLink, User, UserPlus, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X, Expand, ChevronLeft, ChevronRight, Pencil, Save } from "lucide-react";
 import { Modal } from "./Modal";
 import { JiraMarkdown } from "./JiraMarkdown";
 import { NotesEditor } from "./NotesEditor";
@@ -223,6 +223,9 @@ export function TicketDetailModal({ ticket, jiraHost, onClose, onTicketClick, on
   const [isSavingDescription, setIsSavingDescription] = useState(false);
   const [descriptionError, setDescriptionError] = useState<string | null>(null);
 
+  // Assignment state
+  const [isAssigning, setIsAssigning] = useState(false);
+
   // Fetch transitions and workflow when ticket changes
   useEffect(() => {
     if (!ticket?.key) {
@@ -438,6 +441,38 @@ export function TicketDetailModal({ ticket, jiraHost, onClose, onTicketClick, on
     }
   };
 
+  const handleAssignToSelf = async () => {
+    if (!ticket) return;
+
+    setIsAssigning(true);
+
+    try {
+      const response = await fetch(`/api/jira/tickets/${ticket.key}/assign-self`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        // Update the ticket with new assignee
+        if (data.issue && onTicketUpdate) {
+          onTicketUpdate({
+            ...ticket,
+            fields: {
+              ...ticket.fields,
+              assignee: data.issue.fields.assignee,
+            },
+          });
+        }
+      }
+    } catch (err) {
+      // Silently fail - the ticket will update on next refresh
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
   if (!ticket) return null;
 
   // Check if current branch matches this ticket
@@ -631,7 +666,23 @@ export function TicketDetailModal({ ticket, jiraHost, onClose, onTicketClick, on
         {/* Details Grid */}
         <div className="detail-grid">
           <DetailRow icon={User} label="Assignee">
-            {ticket.fields.assignee?.displayName || "Unassigned"}
+            <div className="assignee-row">
+              <span>{ticket.fields.assignee?.displayName || "Unassigned"}</span>
+              {!ticket.fields.assignee && (
+                <button
+                  className="btn-sm btn-secondary"
+                  onClick={handleAssignToSelf}
+                  disabled={isAssigning}
+                >
+                  {isAssigning ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <UserPlus className="w-3 h-3" />
+                  )}
+                  Assign to me
+                </button>
+              )}
+            </div>
           </DetailRow>
 
           <DetailRow icon={Calendar} label="Created">

@@ -405,4 +405,61 @@ export class AzureDevOpsService {
     const stateIcon = status.state === "succeeded" ? "✓" : status.state === "failed" ? "✗" : "○";
     return `${stateIcon} ${status.context.name}: ${status.state} - ${status.description}`;
   }
+
+  /**
+   * Add a reviewer to a PR
+   * @param pullRequestId - The PR ID
+   * @param reviewerId - The user's ID (GUID)
+   * @param isRequired - Whether this is a required reviewer (default: false for optional)
+   */
+  async addReviewer(pullRequestId: number, reviewerId: string, isRequired: boolean = false): Promise<PRReviewer> {
+    const reviewer = await this.request<PRReviewer>(
+      `/git/repositories/${this.repositoryId}/pullrequests/${pullRequestId}/reviewers/${reviewerId}?api-version=7.0`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          vote: 0,
+          isRequired,
+        }),
+      }
+    );
+    return reviewer;
+  }
+
+  /**
+   * Remove a reviewer from a PR
+   */
+  async removeReviewer(pullRequestId: number, reviewerId: string): Promise<void> {
+    await this.request<void>(
+      `/git/repositories/${this.repositoryId}/pullrequests/${pullRequestId}/reviewers/${reviewerId}?api-version=7.0`,
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
+  /**
+   * Add the current user as an optional reviewer
+   */
+  async addSelfAsReviewer(pullRequestId: number): Promise<{ reviewer: PRReviewer; displayName: string }> {
+    const currentUser = await this.getCurrentUser();
+    const reviewer = await this.addReviewer(pullRequestId, currentUser.id, false);
+    return { reviewer, displayName: currentUser.displayName };
+  }
+
+  /**
+   * Search for users in the organization
+   */
+  async searchUsers(query: string): Promise<Array<{ id: string; displayName: string; emailAddress?: string }>> {
+    // Use the identity picker API to search users
+    const response = await this.request<{ value: Array<{ id: string; displayName: string; mail?: string }> }>(
+      `https://vssps.dev.azure.com/${this.organization}/_apis/identities?searchFilter=General&filterValue=${encodeURIComponent(query)}&api-version=7.0`
+    );
+
+    return response.value.map(user => ({
+      id: user.id,
+      displayName: user.displayName,
+      emailAddress: user.mail,
+    }));
+  }
 }

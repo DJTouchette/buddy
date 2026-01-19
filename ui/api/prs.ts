@@ -192,5 +192,103 @@ export function prsRoutes(ctx: ApiContext) {
         }
       },
     },
+
+    // POST /api/prs/:id/reviewers - Add a reviewer to PR
+    "/api/prs/:id/reviewers": {
+      POST: async (req: Request & { params: { id: string } }) => {
+        try {
+          const { azureDevOpsService } = await ctx.getServices();
+          const prId = parseInt(req.params.id);
+          const body = (await req.json()) as { reviewerId: string; isRequired?: boolean };
+
+          if (!body.reviewerId) {
+            return Response.json({ error: "reviewerId is required" }, { status: 400 });
+          }
+
+          const reviewer = await azureDevOpsService.addReviewer(prId, body.reviewerId, body.isRequired || false);
+
+          // Get updated PR
+          const pr = await azureDevOpsService.getPullRequest(prId);
+
+          // Invalidate cache since reviewers changed
+          ctx.cacheService.invalidate(CACHE_KEY_PRS);
+
+          return Response.json({ success: true, reviewer, pr });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // POST /api/prs/:id/reviewers/self - Add current user as optional reviewer
+    "/api/prs/:id/reviewers/self": {
+      POST: async (req: Request & { params: { id: string } }) => {
+        try {
+          const { azureDevOpsService } = await ctx.getServices();
+          const prId = parseInt(req.params.id);
+
+          const result = await azureDevOpsService.addSelfAsReviewer(prId);
+
+          // Get updated PR
+          const pr = await azureDevOpsService.getPullRequest(prId);
+
+          // Invalidate cache since reviewers changed
+          ctx.cacheService.invalidate(CACHE_KEY_PRS);
+
+          return Response.json({
+            success: true,
+            reviewer: result.reviewer,
+            displayName: result.displayName,
+            pr,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // DELETE /api/prs/:id/reviewers/:reviewerId - Remove a reviewer from PR
+    "/api/prs/:id/reviewers/:reviewerId": {
+      DELETE: async (req: Request & { params: { id: string; reviewerId: string } }) => {
+        try {
+          const { azureDevOpsService } = await ctx.getServices();
+          const prId = parseInt(req.params.id);
+          const reviewerId = req.params.reviewerId;
+
+          await azureDevOpsService.removeReviewer(prId, reviewerId);
+
+          // Get updated PR
+          const pr = await azureDevOpsService.getPullRequest(prId);
+
+          // Invalidate cache since reviewers changed
+          ctx.cacheService.invalidate(CACHE_KEY_PRS);
+
+          return Response.json({ success: true, pr });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // GET /api/prs/users/search - Search for users to add as reviewers
+    "/api/prs/users/search": {
+      GET: async (req: Request) => {
+        try {
+          const url = new URL(req.url);
+          const query = url.searchParams.get("q") || "";
+
+          if (!query.trim() || query.length < 2) {
+            return Response.json({ users: [], error: "Query must be at least 2 characters" }, { status: 400 });
+          }
+
+          const { azureDevOpsService } = await ctx.getServices();
+          const users = await azureDevOpsService.searchUsers(query);
+
+          return Response.json({ users });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
   };
 }
