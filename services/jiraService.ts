@@ -240,6 +240,76 @@ export class JiraService {
     await this.assignIssue(issueKey, null);
   }
 
+  /**
+   * Add a comment to an issue
+   */
+  async addComment(issueKey: string, comment: string): Promise<void> {
+    // Convert to ADF (Atlassian Document Format)
+    const adfComment = {
+      type: "doc",
+      version: 1,
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              text: comment,
+            },
+          ],
+        },
+      ],
+    };
+
+    await this.request(`/issue/${issueKey}/comment`, {
+      method: "POST",
+      body: JSON.stringify({
+        body: adfComment,
+      }),
+    });
+  }
+
+  /**
+   * Add a comment with a link (for PR links)
+   */
+  async addCommentWithLink(issueKey: string, text: string, url: string, linkText: string): Promise<void> {
+    // Convert to ADF with a link
+    const adfComment = {
+      type: "doc",
+      version: 1,
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              text: text + " ",
+            },
+            {
+              type: "text",
+              text: linkText,
+              marks: [
+                {
+                  type: "link",
+                  attrs: {
+                    href: url,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    await this.request(`/issue/${issueKey}/comment`, {
+      method: "POST",
+      body: JSON.stringify({
+        body: adfComment,
+      }),
+    });
+  }
+
   async updateIssueDescription(issueKey: string, description: string): Promise<void> {
     // Convert markdown to ADF (Atlassian Document Format)
     const content: any[] = [];

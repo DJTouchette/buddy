@@ -343,6 +343,7 @@ export function jobsRoutes(ctx: JobsApiContext) {
 
 /**
  * Execute a build job asynchronously
+ * Uses two-phase approach: build shared .NET projects first, then lambdas in parallel
  */
 async function executeBuildJob(
   jobId: string,
@@ -356,8 +357,13 @@ async function executeBuildJob(
     const lambdas = await infraService.discoverLambdas(backendPath);
 
     if (target === "all") {
-      await builderService.buildAll(lambdas, jobId);
-    } else if (["dotnet", "js", "python", "typescript-edge"].includes(target)) {
+      // Build all lambdas - uses two-phase approach for .NET
+      await builderService.buildAll(lambdas, jobId, undefined, backendPath);
+    } else if (target === "dotnet") {
+      // Build all .NET lambdas - uses two-phase approach
+      await builderService.buildByType(lambdas, target as any, jobId, backendPath);
+    } else if (["js", "python", "typescript-edge"].includes(target)) {
+      // Non-.NET types don't need shared project pre-build
       await builderService.buildByType(lambdas, target as any, jobId);
     } else {
       // Build specific lambda by name
@@ -368,6 +374,12 @@ async function executeBuildJob(
       }
 
       ctx.jobService.updateJobStatus(jobId, "running");
+
+      // For single .NET lambda, still pre-build shared projects for faster subsequent builds
+      if (lambda.type === "dotnet") {
+        await builderService.buildSharedProjects(backendPath, jobId);
+      }
+
       const result = await builderService.buildLambda(lambda, jobId);
 
       if (result.success) {
@@ -620,6 +632,7 @@ async function executeDeployLambdaJob(
 
 /**
  * Execute a tail-logs job (stream CloudWatch logs for a Lambda function)
+ * Auto-reconnects when hitting event limit to continue streaming without losing logs
  */
 async function executeTailLogsJob(
   jobId: string,
@@ -643,48 +656,63 @@ async function executeTailLogsJob(
   });
 
   try {
-    // Start tailing logs from now (live tail only)
-    const logGenerator = infraService.tailLambdaLogs(awsFunctionName, {
-      startTime: Date.now(),
-      pollIntervalMs: 2000,
-      signal: abortController.signal,
-    });
+    let startTime = Date.now();
+    let lastEventTimestamp = startTime;
+    const eventsPerBatch = 500; // Reconnect after this many events
 
-    let eventCount = 0;
-    const maxEvents = 500; // Stop after 500 events to prevent infinite running
+    // Keep tailing until cancelled
+    while (!abortController.signal.aborted) {
+      // Start tailing logs from last event timestamp
+      const logGenerator = infraService.tailLambdaLogs(awsFunctionName, {
+        startTime: lastEventTimestamp,
+        pollIntervalMs: 2000,
+        signal: abortController.signal,
+      });
 
-    for await (const event of logGenerator) {
+      let eventCount = 0;
+
+      for await (const event of logGenerator) {
+        if (abortController.signal.aborted) break;
+
+        // Format the log event
+        const timestamp = new Date(event.timestamp).toLocaleTimeString();
+        const message = event.message.trim();
+
+        // Skip empty messages
+        if (!message) continue;
+
+        ctx.jobService.appendOutput(jobId, `[${timestamp}] ${message}`);
+        eventCount++;
+
+        // Track the latest event timestamp for reconnection
+        // Add 1ms to avoid duplicate events on reconnect
+        lastEventTimestamp = Math.max(lastEventTimestamp, event.timestamp + 1);
+
+        // Check if we've hit the batch limit - reconnect to continue
+        if (eventCount >= eventsPerBatch) {
+          ctx.jobService.appendOutput(jobId, ``);
+          ctx.jobService.appendOutput(jobId, `--- Reconnecting to continue streaming (${eventsPerBatch} events processed) ---`);
+          ctx.jobService.appendOutput(jobId, ``);
+          break;
+        }
+      }
+
+      // If aborted, exit the outer loop
       if (abortController.signal.aborted) break;
 
-      // Format the log event
-      const timestamp = new Date(event.timestamp).toLocaleTimeString();
-      const message = event.message.trim();
-
-      // Skip empty messages
-      if (!message) continue;
-
-      ctx.jobService.appendOutput(jobId, `[${timestamp}] ${message}`);
-      eventCount++;
-
-      // Check if we've hit the max
-      if (eventCount >= maxEvents) {
-        ctx.jobService.appendOutput(jobId, ``);
-        ctx.jobService.appendOutput(jobId, `--- Reached ${maxEvents} events limit. Stopping tail. ---`);
-        break;
+      // If we didn't hit the batch limit, the generator ended naturally
+      // This shouldn't normally happen with polling, but handle it gracefully
+      if (eventCount < eventsPerBatch) {
+        // Wait a bit and try again (generator might have errored internally)
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     }
 
     ctx.jobService.unregisterProcess(jobId);
 
-    if (abortController.signal.aborted) {
-      ctx.jobService.appendOutput(jobId, ``);
-      ctx.jobService.appendOutput(jobId, `--- Log tailing stopped ---`);
-      ctx.jobService.updateJobStatus(jobId, "cancelled");
-    } else {
-      ctx.jobService.appendOutput(jobId, ``);
-      ctx.jobService.appendOutput(jobId, `--- End of log tail ---`);
-      ctx.jobService.updateJobStatus(jobId, "completed");
-    }
+    ctx.jobService.appendOutput(jobId, ``);
+    ctx.jobService.appendOutput(jobId, `--- Log tailing stopped ---`);
+    ctx.jobService.updateJobStatus(jobId, "cancelled");
   } catch (error: any) {
     ctx.jobService.unregisterProcess(jobId);
     ctx.jobService.appendOutput(jobId, ``);

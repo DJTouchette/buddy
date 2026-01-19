@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { X, StopCircle, Maximize2, Minimize2, CheckCircle, XCircle, Loader2, ChevronUp, ChevronDown, ArrowDown, Save } from "lucide-react";
+import { X, StopCircle, Maximize2, Minimize2, CheckCircle, XCircle, Loader2, ChevronUp, ChevronDown, ArrowDown, Save, Trash2 } from "lucide-react";
 
 interface Job {
   id: string;
@@ -204,6 +204,19 @@ export function JobOutput({ job, onClose, onCancel, onComplete, lambdaName }: Jo
           {saveSuccess && <span className="badge badge-green ml-2">Saved!</span>}
         </div>
         <div className="job-output-actions">
+          {output.length > 0 && (
+            <button
+              className="btn-sm btn-secondary"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOutput([]);
+              }}
+              title="Clear displayed logs"
+            >
+              <Trash2 className="w-3 h-3" />
+              Clear
+            </button>
+          )}
           {canSave && (
             <button
               className="btn-sm btn-secondary"

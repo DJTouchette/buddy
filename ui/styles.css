@@ -1563,6 +1563,39 @@ a:hover {
   gap: 0.75rem;
 }
 
+.attachment-item-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.attachment-item-wrapper:hover .attachment-download-btn {
+  opacity: 1;
+}
+
+.attachment-download-btn {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.375rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  background-color: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  color: var(--foreground);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background-color 0.15s;
+  z-index: 1;
+}
+
+.attachment-download-btn:hover {
+  background-color: var(--muted);
+}
+
 .attachment-item {
   display: flex;
   flex-direction: column;
@@ -4900,6 +4933,27 @@ a:hover {
 .alert-content span {
   font-size: 0.8125rem;
   opacity: 0.9;
+}
+
+/* Checkbox label */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--link);
+  cursor: pointer;
+}
+
+.checkbox-label span {
+  color: var(--foreground);
 }
 
 /* Badge small */

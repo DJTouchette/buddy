@@ -331,5 +331,34 @@ export function jiraRoutes(ctx: ApiContext) {
         }
       },
     },
+
+    // POST /api/jira/tickets/:key/comment - Add a comment to a ticket
+    "/api/jira/tickets/:key/comment": {
+      POST: async (req: Request & { params: { key: string } }) => {
+        try {
+          const { jiraService } = await ctx.getServices();
+          const issueKey = req.params.key;
+          const body = (await req.json()) as { comment: string; url?: string; linkText?: string };
+
+          if (!body.comment) {
+            return Response.json({ error: "comment is required" }, { status: 400 });
+          }
+
+          if (body.url && body.linkText) {
+            // Add comment with link
+            await jiraService.addCommentWithLink(issueKey, body.comment, body.url, body.linkText);
+          } else {
+            // Add plain comment
+            await jiraService.addComment(issueKey, body.comment);
+          }
+
+          return Response.json({
+            success: true,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
   };
 }

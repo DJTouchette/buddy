@@ -175,31 +175,52 @@ function AttachmentItem({ attachment }: { attachment: JiraAttachment }) {
 
   // Use proxy URL for thumbnails to handle JIRA auth
   const thumbnailUrl = `/api/jira/thumbnail/${attachment.id}`;
-  // Link to JIRA for opening the full attachment (uses JIRA's built-in viewer)
-  const jiraAttachmentUrl = attachment.content;
+  // Use proxy endpoint for viewing (handles auth)
+  const viewUrl = `/api/jira/attachment/${attachment.id}`;
+
+  const handleDownload = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Create a temporary link to trigger download
+    const link = document.createElement("a");
+    link.href = viewUrl;
+    link.download = attachment.filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   return (
-    <a
-      href={jiraAttachmentUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="attachment-item"
-      title={`${attachment.filename} (${formatFileSize(attachment.size)})`}
-    >
-      {isImage ? (
-        <div className="attachment-thumbnail">
-          <img src={thumbnailUrl} alt={attachment.filename} />
+    <div className="attachment-item-wrapper">
+      <a
+        href={viewUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="attachment-item"
+        title={`View ${attachment.filename} (${formatFileSize(attachment.size)})`}
+      >
+        {isImage ? (
+          <div className="attachment-thumbnail">
+            <img src={thumbnailUrl} alt={attachment.filename} />
+          </div>
+        ) : (
+          <div className="attachment-icon">
+            <FileIcon className="w-8 h-8" />
+          </div>
+        )}
+        <div className="attachment-info">
+          <span className="attachment-name">{attachment.filename}</span>
+          <span className="attachment-meta">{formatFileSize(attachment.size)}</span>
         </div>
-      ) : (
-        <div className="attachment-icon">
-          <FileIcon className="w-8 h-8" />
-        </div>
-      )}
-      <div className="attachment-info">
-        <span className="attachment-name">{attachment.filename}</span>
-        <span className="attachment-meta">{formatFileSize(attachment.size)}</span>
-      </div>
-    </a>
+      </a>
+      <button
+        className="attachment-download-btn"
+        onClick={handleDownload}
+        title={`Download ${attachment.filename}`}
+      >
+        <Download className="w-4 h-4" />
+      </button>
+    </div>
   );
 }
 

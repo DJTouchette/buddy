@@ -8,6 +8,12 @@ import type { LambdaInfo } from "./infraService";
 const isWindows = os.platform() === "win32";
 const yarnCmd = isWindows ? "yarn.cmd" : "yarn";
 
+export interface SharedProject {
+  name: string;
+  path: string;
+  csprojPath: string;
+}
+
 export interface BuildResult {
   name: string;
   success: boolean;
@@ -27,6 +33,188 @@ export class LambdaBuilderService {
 
   constructor(jobService: JobService) {
     this.jobService = jobService;
+  }
+
+  /**
+   * Discover shared .NET projects in the backend/Shared folder
+   * These are commonly referenced by multiple lambdas
+   */
+  async discoverSharedProjects(backendPath: string): Promise<SharedProject[]> {
+    const sharedDir = path.join(backendPath, "Shared");
+    const projects: SharedProject[] = [];
+
+    if (!fs.existsSync(sharedDir)) {
+      return projects;
+    }
+
+    // Scan for .csproj files in Shared directory and subdirectories
+    const scanDir = async (dir: string): Promise<void> => {
+      try {
+        const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            // Skip bin/obj directories
+            if (entry.name !== "bin" && entry.name !== "obj") {
+              await scanDir(fullPath);
+            }
+          } else if (entry.name.endsWith(".csproj")) {
+            const name = entry.name.replace(".csproj", "");
+            projects.push({
+              name,
+              path: dir,
+              csprojPath: fullPath,
+            });
+          }
+        }
+      } catch {
+        // Ignore errors
+      }
+    };
+
+    await scanDir(sharedDir);
+    return projects;
+  }
+
+  /**
+   * Discover handler projects that are dependencies (not lambdas themselves but referenced)
+   * These include projects like SMTP, DataLayer, PaymentGateway
+   */
+  async discoverDependencyHandlers(backendPath: string): Promise<SharedProject[]> {
+    const handlersDir = path.join(backendPath, "Handlers");
+    const projects: SharedProject[] = [];
+
+    // Known dependency handlers (not lambda entry points but referenced by other handlers)
+    const dependencyHandlerNames = ["SMTP", "DataLayer", "PaymentGateway"];
+
+    if (!fs.existsSync(handlersDir)) {
+      return projects;
+    }
+
+    try {
+      const entries = await fs.promises.readdir(handlersDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && dependencyHandlerNames.includes(entry.name)) {
+          const handlerDir = path.join(handlersDir, entry.name);
+          const srcDir = path.join(handlerDir, "src", entry.name);
+
+          if (fs.existsSync(srcDir)) {
+            const csprojPath = path.join(srcDir, `${entry.name}.csproj`);
+            if (fs.existsSync(csprojPath)) {
+              projects.push({
+                name: entry.name,
+                path: srcDir,
+                csprojPath,
+              });
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore errors
+    }
+
+    return projects;
+  }
+
+  /**
+   * Build all shared projects to pre-warm the build cache
+   * This should be called before building lambdas in parallel
+   */
+  async buildSharedProjects(
+    backendPath: string,
+    jobId: string,
+    onOutput?: (line: string) => void
+  ): Promise<{ success: boolean; built: number; failed: number; duration: number }> {
+    const startTime = Date.now();
+    const output = onOutput || ((line: string) => this.jobService.appendOutput(jobId, line));
+
+    output(`\n📦 Phase 1: Building shared .NET projects`);
+    output(`This pre-compiles common dependencies so lambdas can build faster in parallel.\n`);
+
+    // Discover shared projects
+    const sharedProjects = await this.discoverSharedProjects(backendPath);
+    const dependencyHandlers = await this.discoverDependencyHandlers(backendPath);
+    const allSharedProjects = [...sharedProjects, ...dependencyHandlers];
+
+    if (allSharedProjects.length === 0) {
+      output(`No shared projects found in ${backendPath}/Shared`);
+      return { success: true, built: 0, failed: 0, duration: Date.now() - startTime };
+    }
+
+    output(`Found ${sharedProjects.length} shared projects + ${dependencyHandlers.length} dependency handlers:`);
+    for (const proj of allSharedProjects) {
+      output(`  - ${proj.name}`);
+    }
+    output("");
+
+    // Add ~/.dotnet/tools to PATH for dotnet
+    const dotnetToolsPath = path.join(os.homedir(), ".dotnet", "tools");
+    const env = {
+      ...process.env,
+      PATH: `${dotnetToolsPath}:${process.env.PATH}`,
+    };
+
+    let built = 0;
+    let failed = 0;
+
+    // Build each shared project sequentially (they may depend on each other)
+    for (const proj of allSharedProjects) {
+      output(`Building ${proj.name}...`);
+
+      try {
+        const proc = Bun.spawn(
+          ["dotnet", "build", "-c", "Release", "--no-restore"],
+          {
+            cwd: proj.path,
+            stdout: "pipe",
+            stderr: "pipe",
+            env,
+          }
+        );
+
+        // First try to restore if no-restore fails
+        const exitCode = await proc.exited;
+        if (exitCode !== 0) {
+          // Try again with restore
+          output(`  Restoring packages for ${proj.name}...`);
+          const procWithRestore = Bun.spawn(
+            ["dotnet", "build", "-c", "Release"],
+            {
+              cwd: proj.path,
+              stdout: "pipe",
+              stderr: "pipe",
+              env,
+            }
+          );
+
+          const exitCode2 = await procWithRestore.exited;
+          if (exitCode2 !== 0) {
+            const stderr = await new Response(procWithRestore.stderr).text();
+            output(`  ✗ ${proj.name} failed: ${stderr.slice(0, 200)}`);
+            failed++;
+            continue;
+          }
+        }
+
+        output(`  ✓ ${proj.name} built`);
+        built++;
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        output(`  ✗ ${proj.name} failed: ${errorMsg}`);
+        failed++;
+      }
+    }
+
+    const duration = Date.now() - startTime;
+    output(`\n✓ Shared projects: ${built} built, ${failed} failed (${(duration / 1000).toFixed(1)}s)\n`);
+
+    return {
+      success: failed === 0,
+      built,
+      failed,
+      duration,
+    };
   }
 
   /**
@@ -192,11 +380,13 @@ export class LambdaBuilderService {
 
   /**
    * Build all lambdas, grouped by type with appropriate parallelism
+   * Uses two-phase approach for .NET: build shared projects first, then lambdas in parallel
    */
   async buildAll(
     lambdas: LambdaInfo[],
     jobId: string,
-    parallelism?: number
+    parallelism?: number,
+    backendPath?: string
   ): Promise<BuildResult[]> {
     const cpuCount = os.cpus().length;
     const results: BuildResult[] = [];
@@ -215,7 +405,7 @@ export class LambdaBuilderService {
     // Info about .NET builds
     const dotnetCount = byType["dotnet"]?.length || 0;
     if (dotnetCount > 10) {
-      this.jobService.appendOutput(jobId, `\n🚀 Building ${dotnetCount} .NET lambdas with aggressive parallelism`);
+      this.jobService.appendOutput(jobId, `\n🚀 Building ${dotnetCount} .NET lambdas with two-phase approach`);
     }
 
     this.jobService.updateJobStatus(jobId, "running");
@@ -223,6 +413,15 @@ export class LambdaBuilderService {
     // Log initial system resources
     const initialRes = this.getSystemResources();
     this.jobService.appendOutput(jobId, `System: ${initialRes.freeMemoryGB.toFixed(1)}GB free / ${initialRes.totalMemoryGB.toFixed(1)}GB total, load ${initialRes.loadAvg1m.toFixed(1)}`);
+
+    // Phase 1: Pre-build shared projects for .NET lambdas
+    if (dotnetCount > 0 && backendPath) {
+      const sharedResult = await this.buildSharedProjects(backendPath, jobId);
+      if (!sharedResult.success) {
+        this.jobService.appendOutput(jobId, `⚠️ Some shared projects failed to build. Lambda builds may still work.`);
+      }
+      this.jobService.appendOutput(jobId, `\n🔨 Phase 2: Building individual lambdas in parallel\n`);
+    }
 
     // Build each type with appropriate parallelism
     for (const [type, typeLambdas] of Object.entries(byType)) {
@@ -301,14 +500,16 @@ export class LambdaBuilderService {
 
   /**
    * Build lambdas by type
+   * For .NET lambdas, optionally pre-build shared projects first
    */
   async buildByType(
     lambdas: LambdaInfo[],
     type: LambdaInfo["type"],
-    jobId: string
+    jobId: string,
+    backendPath?: string
   ): Promise<BuildResult[]> {
     const filtered = lambdas.filter((l) => l.type === type);
-    return this.buildAll(filtered, jobId);
+    return this.buildAll(filtered, jobId, undefined, backendPath);
   }
 
   /**

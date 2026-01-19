@@ -101,6 +101,7 @@ export function CreatePRPage({ navigate }: CreatePRPageProps) {
   const [isPushing, setIsPushing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [addJiraComment, setAddJiraComment] = useState(true); // Pre-checked by default
 
   // Diff state
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -113,6 +114,14 @@ export function CreatePRPage({ navigate }: CreatePRPageProps) {
   const [isDarkMode, setIsDarkMode] = useState(() =>
     document.documentElement.classList.contains("dark")
   );
+
+  // Extract JIRA ticket key from branch name (e.g., "CAS-123-some-feature" -> "CAS-123")
+  const getTicketKeyFromBranch = (branch: string): string | null => {
+    const match = branch.match(/^([A-Z]+-\d+)/i);
+    return match ? match[1].toUpperCase() : null;
+  };
+
+  const ticketKey = prInfo?.currentBranch ? getTicketKeyFromBranch(prInfo.currentBranch) : null;
 
   // Map file extensions to language identifiers for syntax highlighting
   const getFileLang = (fileName: string): string => {
@@ -395,6 +404,24 @@ ${prTitle}`;
         throw new Error(data.error || "Failed to create PR");
       }
 
+      // Add JIRA comment if checkbox is checked and we have a ticket key
+      if (addJiraComment && ticketKey && data.pr?.webUrl) {
+        try {
+          await fetch(`/api/jira/tickets/${ticketKey}/comment`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              comment: "PR:",
+              url: data.pr.webUrl,
+              linkText: `PR #${data.pr.pullRequestId} - ${data.pr.title}`,
+            }),
+          });
+        } catch (commentErr) {
+          // Don't fail the PR creation if comment fails
+          console.error("Failed to add JIRA comment:", commentErr);
+        }
+      }
+
       // Navigate to the new PR
       navigate(`/prs/${data.pr.pullRequestId}`);
     } catch (err) {
@@ -621,6 +648,20 @@ ${prTitle}`;
                 className="form-textarea"
               />
             </div>
+
+            {/* JIRA Comment Checkbox */}
+            {ticketKey && (
+              <div className="form-section">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={addJiraComment}
+                    onChange={(e) => setAddJiraComment(e.target.checked)}
+                  />
+                  <span>Add comment to JIRA ticket ({ticketKey}) with PR link</span>
+                </label>
+              </div>
+            )}
 
             {/* Error message */}
             {createError && (
