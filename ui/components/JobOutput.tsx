@@ -5,12 +5,14 @@ interface Job {
   id: string;
   type: string;
   target: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "awaiting_approval";
   progress: number;
   output: string[];
   startedAt: number;
   completedAt: number | null;
   error: string | null;
+  awaitingApproval?: boolean;
+  diffOutput?: string[];
 }
 
 interface JobOutputProps {
@@ -149,7 +151,7 @@ export function JobOutput({ job, onClose, onCancel, onComplete, lambdaName }: Jo
     setShowSaveDialog(true);
   };
 
-  const isRunning = status === "pending" || status === "running";
+  const isRunning = status === "pending" || status === "running" || status === "awaiting_approval";
   const isSuccess = status === "completed";
   const isFailed = status === "failed" || status === "cancelled";
   const canSave = lambdaName && output.length > 0;

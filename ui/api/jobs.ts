@@ -12,6 +12,16 @@ const yarnCmd = isWindows ? "yarn.cmd" : "yarn";
 const npxCmd = isWindows ? "npx.cmd" : "npx";
 const awsCmd = isWindows ? "aws.cmd" : "aws";
 
+/**
+ * Strip ANSI escape codes from a string
+ * Handles color codes, cursor movement, line clearing, etc.
+ */
+function stripAnsi(str: string): string {
+  // Regex to match all ANSI escape sequences
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]|\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, '');
+}
+
 export interface JobsApiContext {
   cacheService: CacheService;
   jobService: JobService;
@@ -240,6 +250,59 @@ export function jobsRoutes(ctx: JobsApiContext) {
       },
     },
 
+    // POST /api/jobs/:id/respond - Send approval response to awaiting job
+    "/api/jobs/:id/respond": {
+      POST: async (req: Request & { params: { id: string } }) => {
+        try {
+          const body = (await req.json()) as { approved: boolean };
+          const jobId = req.params.id;
+
+          const job = ctx.jobService.getJob(jobId);
+          if (!job) {
+            return Response.json({ error: "Job not found" }, { status: 404 });
+          }
+
+          if (job.status !== "awaiting_approval") {
+            return Response.json({ error: "Job is not awaiting approval" }, { status: 400 });
+          }
+
+          const success = ctx.jobService.sendApprovalResponse(jobId, body.approved);
+
+          if (!success) {
+            return Response.json({ error: "Failed to send response to job" }, { status: 500 });
+          }
+
+          return Response.json({ success: true, approved: body.approved });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
+    // GET /api/jobs/:id/diff - Get diff output for a job awaiting approval
+    "/api/jobs/:id/diff": {
+      GET: async (req: Request & { params: { id: string } }) => {
+        try {
+          const jobId = req.params.id;
+          const job = ctx.jobService.getJob(jobId);
+
+          if (!job) {
+            return Response.json({ error: "Job not found" }, { status: 404 });
+          }
+
+          const diffOutput = ctx.jobService.getDiffOutput(jobId);
+
+          return Response.json({
+            diffOutput: diffOutput || job.output,
+            status: job.status,
+            target: job.target,
+          });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 500 });
+        }
+      },
+    },
+
     // GET /api/jobs/builds - Get lambda build status
     "/api/jobs/builds": {
       GET: async () => {
@@ -395,6 +458,7 @@ async function executeBuildJob(
 
 /**
  * Execute a CDK job asynchronously
+ * For deploy commands, shows changeset and waits for user approval
  */
 async function executeCdkJob(
   jobId: string,
@@ -434,6 +498,9 @@ async function executeCdkJob(
       INFRA_STAGE: stage,
       REACT_APP_STAGE: stage,
       NODE_OPTIONS: "--max_old_space_size=8192",
+      // Disable color output since we're displaying in a web UI
+      NO_COLOR: "1",
+      FORCE_COLOR: "0",
     };
 
     ctx.jobService.appendOutput(jobId, `Stack: ${stackName}`);
@@ -441,70 +508,280 @@ async function executeCdkJob(
     ctx.jobService.appendOutput(jobId, `Stage: ${stage}`);
     ctx.jobService.appendOutput(jobId, ``);
 
-    // Build command args - add --require-approval never for deploy to avoid interactive prompts
-    const cdkArgs = ["cdk", command, stackName];
+    // For deploy, use interactive mode to show changeset and wait for approval
     if (command === "deploy") {
-      cdkArgs.push("--require-approval", "never");
-    }
-
-    ctx.jobService.appendOutput(jobId, `> yarn ${cdkArgs.join(" ")}`);
-
-    // Run CDK command (use yarn.cmd on Windows)
-    const proc = Bun.spawn([yarnCmd, ...cdkArgs], {
-      cwd: infraPath,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    // Register process for cancellation
-    ctx.jobService.registerProcess(jobId, proc);
-
-    // Stream both stdout and stderr in parallel
-    const streamOutput = async (stream: ReadableStream<Uint8Array>, prefix?: string) => {
-      const reader = stream.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (line.trim()) {
-            ctx.jobService.appendOutput(jobId, prefix ? `${prefix}${line}` : line);
-          }
-        }
-      }
-
-      if (buffer.trim()) {
-        ctx.jobService.appendOutput(jobId, prefix ? `${prefix}${buffer}` : buffer);
-      }
-    };
-
-    // Stream both stdout and stderr simultaneously (CDK outputs to stderr)
-    await Promise.all([
-      streamOutput(proc.stdout),
-      streamOutput(proc.stderr),
-    ]);
-
-    const exitCode = await proc.exited;
-    ctx.jobService.unregisterProcess(jobId);
-
-    if (exitCode === 0) {
-      ctx.jobService.appendOutput(jobId, `\n✓ CDK ${command} completed successfully`);
-      ctx.jobService.updateJobStatus(jobId, "completed");
+      await executeCdkDeployWithApproval(jobId, stackName, infraPath, env, ctx);
     } else {
-      ctx.jobService.appendOutput(jobId, `\n✗ CDK ${command} failed with exit code ${exitCode}`);
-      ctx.jobService.updateJobStatus(jobId, "failed", `Exit code ${exitCode}`);
+      // For diff/synth, run non-interactively
+      await executeCdkNonInteractive(jobId, command, stackName, infraPath, env, ctx);
     }
   } catch (error) {
     ctx.jobService.appendOutput(jobId, `\n✗ Error: ${error}`);
     ctx.jobService.updateJobStatus(jobId, "failed", String(error));
+  }
+}
+
+/**
+ * Execute CDK deploy with approval - two phase approach:
+ * 1. Run cdk diff to get changes
+ * 2. Show approval modal
+ * 3. If approved, run cdk deploy
+ */
+async function executeCdkDeployWithApproval(
+  jobId: string,
+  stackName: string,
+  infraPath: string,
+  env: Record<string, string | undefined>,
+  ctx: JobsApiContext
+) {
+  // Phase 1: Run cdk diff to get the changes
+  ctx.jobService.appendOutput(jobId, `Phase 1: Calculating changes...`);
+  ctx.jobService.appendOutput(jobId, ``);
+  ctx.jobService.appendOutput(jobId, `> yarn cdk diff ${stackName}`);
+  ctx.jobService.appendOutput(jobId, ``);
+
+  const diffProc = Bun.spawn([yarnCmd, "cdk", "diff", stackName], {
+    cwd: infraPath,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  ctx.jobService.registerProcess(jobId, diffProc);
+
+  const diffOutput: string[] = [];
+  let hasChanges = false;
+
+  const streamDiffOutput = async (stream: ReadableStream<Uint8Array>) => {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const rawLine of lines) {
+        const line = stripAnsi(rawLine);
+        diffOutput.push(line);
+        if (line.trim()) {
+          ctx.jobService.appendOutput(jobId, line);
+        }
+        // Detect if there are actual changes
+        if (line.match(/^\s*\[\+\]/) || line.match(/^\s*\[-\]/) || line.match(/^\s*\[~\]/)) {
+          hasChanges = true;
+        }
+        // Also check for "Resources" section or IAM changes
+        if (line.includes("IAM Statement Changes") || line.includes("Security Group Changes")) {
+          hasChanges = true;
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      const line = stripAnsi(buffer);
+      diffOutput.push(line);
+      ctx.jobService.appendOutput(jobId, line);
+    }
+  };
+
+  await Promise.all([
+    streamDiffOutput(diffProc.stdout),
+    streamDiffOutput(diffProc.stderr),
+  ]);
+
+  const diffExitCode = await diffProc.exited;
+  ctx.jobService.unregisterProcess(jobId);
+
+  // Exit code 1 means there are differences, 0 means no changes
+  if (diffExitCode !== 0 && diffExitCode !== 1) {
+    ctx.jobService.appendOutput(jobId, `\n✗ CDK diff failed with exit code ${diffExitCode}`);
+    ctx.jobService.updateJobStatus(jobId, "failed", `Diff failed with exit code ${diffExitCode}`);
+    return;
+  }
+
+  // Check if there are any changes to deploy
+  if (diffExitCode === 0 && !hasChanges) {
+    ctx.jobService.appendOutput(jobId, ``);
+    ctx.jobService.appendOutput(jobId, `✓ No changes to deploy - stack is up to date`);
+    ctx.jobService.updateJobStatus(jobId, "completed");
+    return;
+  }
+
+  // Phase 2: Wait for user approval
+  ctx.jobService.appendOutput(jobId, ``);
+  ctx.jobService.appendOutput(jobId, `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  ctx.jobService.appendOutput(jobId, `⏸️  Changes detected - waiting for approval...`);
+  ctx.jobService.appendOutput(jobId, `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
+  // Set job to awaiting approval with the diff output
+  ctx.jobService.setAwaitingApproval(jobId, diffOutput);
+
+  // Wait for approval response
+  const approved = await waitForApproval(jobId, ctx);
+
+  if (!approved) {
+    ctx.jobService.appendOutput(jobId, ``);
+    ctx.jobService.appendOutput(jobId, `⏹️  Deploy rejected by user`);
+    ctx.jobService.updateJobStatus(jobId, "cancelled");
+    return;
+  }
+
+  // Phase 3: Run the actual deploy
+  ctx.jobService.appendOutput(jobId, ``);
+  ctx.jobService.appendOutput(jobId, `Phase 2: Deploying changes...`);
+  ctx.jobService.appendOutput(jobId, ``);
+  ctx.jobService.appendOutput(jobId, `> yarn cdk deploy ${stackName} --require-approval never`);
+  ctx.jobService.appendOutput(jobId, ``);
+
+  const deployProc = Bun.spawn([yarnCmd, "cdk", "deploy", stackName, "--require-approval", "never"], {
+    cwd: infraPath,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  ctx.jobService.registerProcess(jobId, deployProc);
+
+  const streamDeployOutput = async (stream: ReadableStream<Uint8Array>) => {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const rawLine of lines) {
+        const line = stripAnsi(rawLine);
+        if (line.trim()) {
+          ctx.jobService.appendOutput(jobId, line);
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      ctx.jobService.appendOutput(jobId, stripAnsi(buffer));
+    }
+  };
+
+  await Promise.all([
+    streamDeployOutput(deployProc.stdout),
+    streamDeployOutput(deployProc.stderr),
+  ]);
+
+  const deployExitCode = await deployProc.exited;
+  ctx.jobService.unregisterProcess(jobId);
+
+  if (deployExitCode === 0) {
+    ctx.jobService.appendOutput(jobId, `\n✓ CDK deploy completed successfully`);
+    ctx.jobService.updateJobStatus(jobId, "completed");
+  } else {
+    ctx.jobService.appendOutput(jobId, `\n✗ CDK deploy failed with exit code ${deployExitCode}`);
+    ctx.jobService.updateJobStatus(jobId, "failed", `Exit code ${deployExitCode}`);
+  }
+}
+
+/**
+ * Wait for user approval response
+ */
+function waitForApproval(jobId: string, ctx: JobsApiContext): Promise<boolean> {
+  return new Promise((resolve) => {
+    // Check every 500ms if the job status changed from awaiting_approval
+    const checkInterval = setInterval(() => {
+      const job = ctx.jobService.getJob(jobId);
+      if (!job) {
+        clearInterval(checkInterval);
+        resolve(false);
+        return;
+      }
+
+      if (job.status === "running") {
+        // User approved
+        clearInterval(checkInterval);
+        resolve(true);
+      } else if (job.status === "cancelled" || job.status === "failed") {
+        // User rejected or job was cancelled
+        clearInterval(checkInterval);
+        resolve(false);
+      }
+      // If still awaiting_approval, keep waiting
+    }, 500);
+  });
+}
+
+/**
+ * Execute CDK command non-interactively (for diff, synth)
+ */
+async function executeCdkNonInteractive(
+  jobId: string,
+  command: "diff" | "synth",
+  stackName: string,
+  infraPath: string,
+  env: Record<string, string | undefined>,
+  ctx: JobsApiContext
+) {
+  const cdkArgs = ["cdk", command, stackName];
+
+  ctx.jobService.appendOutput(jobId, `> yarn ${cdkArgs.join(" ")}`);
+
+  const proc = Bun.spawn([yarnCmd, ...cdkArgs], {
+    cwd: infraPath,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  ctx.jobService.registerProcess(jobId, proc);
+
+  const streamOutput = async (stream: ReadableStream<Uint8Array>) => {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const rawLine of lines) {
+        const line = stripAnsi(rawLine);
+        if (line.trim()) {
+          ctx.jobService.appendOutput(jobId, line);
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      ctx.jobService.appendOutput(jobId, stripAnsi(buffer));
+    }
+  };
+
+  await Promise.all([
+    streamOutput(proc.stdout),
+    streamOutput(proc.stderr),
+  ]);
+
+  const exitCode = await proc.exited;
+  ctx.jobService.unregisterProcess(jobId);
+
+  if (exitCode === 0) {
+    ctx.jobService.appendOutput(jobId, `\n✓ CDK ${command} completed successfully`);
+    ctx.jobService.updateJobStatus(jobId, "completed");
+  } else {
+    ctx.jobService.appendOutput(jobId, `\n✗ CDK ${command} failed with exit code ${exitCode}`);
+    ctx.jobService.updateJobStatus(jobId, "failed", `Exit code ${exitCode}`);
   }
 }
 
@@ -593,7 +870,8 @@ async function executeDeployLambdaJob(
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
-        for (const line of lines) {
+        for (const rawLine of lines) {
+          const line = stripAnsi(rawLine);
           if (line.trim()) {
             ctx.jobService.appendOutput(jobId, line);
           }
@@ -601,7 +879,7 @@ async function executeDeployLambdaJob(
       }
 
       if (buffer.trim()) {
-        ctx.jobService.appendOutput(jobId, buffer);
+        ctx.jobService.appendOutput(jobId, stripAnsi(buffer));
       }
     };
 

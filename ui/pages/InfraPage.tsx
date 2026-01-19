@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { JobOutput } from "../components/JobOutput";
 import { LambdaDetailModal } from "../components/LambdaDetailModal";
+import { DeployApprovalModal } from "../components/DeployApprovalModal";
 
 interface Lambda {
   name: string;
@@ -39,12 +40,14 @@ interface Job {
   id: string;
   type: string;
   target: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "awaiting_approval";
   progress: number;
   output: string[];
   startedAt: number;
   completedAt: number | null;
   error: string | null;
+  awaitingApproval?: boolean;
+  diffOutput?: string[];
 }
 
 interface Stack {
@@ -146,6 +149,11 @@ export function InfraPage() {
   const [frontendSaving, setFrontendSaving] = useState(false);
   const [frontendMessage, setFrontendMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  // Deploy approval state
+  const [isRespondingToApproval, setIsRespondingToApproval] = useState(false);
+  const [approvalDiffOutput, setApprovalDiffOutput] = useState<string[] | null>(null);
+  const hasRespondedToApprovalRef = useRef(false);
+
   const fetchData = useCallback(async () => {
     setError(null);
 
@@ -190,12 +198,16 @@ export function InfraPage() {
       const data = await res.json();
       setRecentJobs(data.jobs || []);
 
+      // Helper to check if job is "active" (not finished)
+      const isActiveStatus = (status: string) =>
+        status === "pending" || status === "running" || status === "awaiting_approval";
+
       // On initial load, try to restore persisted job
       if (restoreFromStorage && !activeJobIdRef.current) {
         const persisted = loadJobState();
         if (persisted.jobId) {
           const persistedJob = data.jobs?.find((j: Job) => j.id === persisted.jobId);
-          if (persistedJob && (persistedJob.status === "pending" || persistedJob.status === "running")) {
+          if (persistedJob && isActiveStatus(persistedJob.status)) {
             // Job is still running - restore it
             activeJobIdRef.current = persistedJob.id;
             setActiveJob(persistedJob);
@@ -210,12 +222,18 @@ export function InfraPage() {
 
       // Auto-detect new jobs if we're not currently showing one
       if (!activeJobIdRef.current) {
-        const active = data.jobs?.find(
-          (j: Job) => j.status === "pending" || j.status === "running"
-        );
+        const active = data.jobs?.find((j: Job) => isActiveStatus(j.status));
         if (active) {
           activeJobIdRef.current = active.id;
           setActiveJob(active);
+        }
+      }
+
+      // If we have an active job ref, update its state from the server
+      if (activeJobIdRef.current) {
+        const currentJob = data.jobs?.find((j: Job) => j.id === activeJobIdRef.current);
+        if (currentJob) {
+          setActiveJob(currentJob);
         }
       }
     } catch (err) {
@@ -453,6 +471,7 @@ export function InfraPage() {
       setActiveJob(null);
       setBuildingLambdas(new Set());
       setCompletedLambdas(new Set());
+      setApprovalDiffOutput(null);
       saveJobState(null, new Set()); // Clear persisted state
       fetchJobs(false);
       fetchData();
@@ -460,6 +479,66 @@ export function InfraPage() {
       console.error("Failed to force clear jobs:", err);
     }
   };
+
+  // Fetch diff output when job is awaiting approval
+  const fetchDiffOutput = useCallback(async (jobId: string) => {
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/diff`);
+      const data = await res.json();
+      if (data.diffOutput) {
+        setApprovalDiffOutput(data.diffOutput);
+      }
+    } catch (err) {
+      console.error("Failed to fetch diff output:", err);
+    }
+  }, []);
+
+  // Handle approval response
+  const handleApprovalResponse = async (approved: boolean) => {
+    if (!activeJob) return;
+
+    // Immediately hide the modal and prevent refetching
+    hasRespondedToApprovalRef.current = true;
+    setApprovalDiffOutput(null);
+    setIsRespondingToApproval(true);
+
+    try {
+      const res = await fetch(`/api/jobs/${activeJob.id}/respond`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved }),
+      });
+
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.error || "Failed to send approval response");
+      }
+      // Refresh jobs to get updated status
+      fetchJobs(false);
+    } catch (err) {
+      setError("Failed to send approval response");
+    } finally {
+      setIsRespondingToApproval(false);
+    }
+  };
+
+  // Detect when job enters awaiting_approval state
+  useEffect(() => {
+    // Don't refetch if we've already responded to this approval
+    if (hasRespondedToApprovalRef.current) {
+      return;
+    }
+    if (activeJob?.status === "awaiting_approval" && !approvalDiffOutput) {
+      fetchDiffOutput(activeJob.id);
+    }
+  }, [activeJob?.status, activeJob?.id, approvalDiffOutput, fetchDiffOutput]);
+
+  // Reset the responded flag when a new job starts
+  useEffect(() => {
+    if (activeJob?.status === "running" || activeJob?.status === "pending") {
+      hasRespondedToApprovalRef.current = false;
+    }
+  }, [activeJob?.id, activeJob?.status]);
 
   // Frontend env helpers
   const copyEnvToClipboard = async (content: string) => {
@@ -979,7 +1058,7 @@ export function InfraPage() {
       )}
 
       {/* Active Job Output */}
-      {activeJob && (
+      {activeJob && activeJob.status !== "awaiting_approval" && (
         <JobOutput
           job={activeJob}
           lambdaName={activeJobLambdaName || undefined}
@@ -989,14 +1068,28 @@ export function InfraPage() {
             setBuildingLambdas(new Set());
             setCompletedLambdas(new Set());
             setActiveJobLambdaName(null);
+            setApprovalDiffOutput(null);
             saveJobState(null, new Set()); // Clear persisted state
           }}
           onCancel={() => cancelJob(activeJob.id)}
           onComplete={() => {
             fetchData();
             fetchJobs(false);
+            setApprovalDiffOutput(null);
             saveJobState(null, new Set()); // Clear persisted state on completion
           }}
+        />
+      )}
+
+      {/* Deploy Approval Modal */}
+      {activeJob && activeJob.status === "awaiting_approval" && approvalDiffOutput && (
+        <DeployApprovalModal
+          jobId={activeJob.id}
+          target={activeJob.target}
+          diffOutput={approvalDiffOutput}
+          onApprove={() => handleApprovalResponse(true)}
+          onReject={() => handleApprovalResponse(false)}
+          isResponding={isRespondingToApproval}
         />
       )}
 
@@ -1068,6 +1161,8 @@ function getJobStatusColor(status: string): string {
       return "red";
     case "running":
       return "blue";
+    case "awaiting_approval":
+      return "yellow";
     case "cancelled":
       return "gray";
     default:

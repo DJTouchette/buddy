@@ -3,7 +3,7 @@ import * as path from "path";
 import * as os from "os";
 
 export type JobType = "build" | "deploy" | "diff" | "synth" | "deploy-lambda" | "tail-logs";
-export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "awaiting_approval";
 
 export interface Job {
   id: string;
@@ -15,6 +15,8 @@ export interface Job {
   startedAt: number;
   completedAt: number | null;
   error: string | null;
+  awaitingApproval?: boolean;
+  diffOutput?: string[]; // The diff portion for parsing/display
 }
 
 export interface CreateJobOptions {
@@ -38,6 +40,8 @@ export class JobService {
   private db: Database;
   private outputListeners: Map<string, ((line: string) => void)[]> = new Map();
   private runningProcesses: Map<string, { kill: () => void }> = new Map();
+  private stdinWriters: Map<string, (data: string) => void> = new Map();
+  private approvalListeners: Map<string, ((approved: boolean) => void)[]> = new Map();
 
   constructor() {
     const dbPath = path.join(os.homedir(), ".buddy", "jobs.db");
@@ -151,11 +155,11 @@ export class JobService {
   }
 
   /**
-   * Get all active (pending/running) jobs
+   * Get all active (pending/running/awaiting_approval) jobs
    */
   getActiveJobs(): Job[] {
     const rows = this.db.query<JobRow, []>(
-      "SELECT * FROM jobs WHERE status IN ('pending', 'running') ORDER BY started_at DESC"
+      "SELECT * FROM jobs WHERE status IN ('pending', 'running', 'awaiting_approval') ORDER BY started_at DESC"
     ).all();
 
     return rows.map((row) => this.rowToJob(row));
@@ -274,7 +278,7 @@ export class JobService {
    */
   cancelJob(id: string): boolean {
     const job = this.getJob(id);
-    if (!job || job.status !== "running") {
+    if (!job || (job.status !== "running" && job.status !== "awaiting_approval")) {
       return false;
     }
 
@@ -289,6 +293,9 @@ export class JobService {
 
     this.updateJobStatus(id, "cancelled");
     this.appendOutput(id, "\n[Job cancelled by user]");
+
+    // Clear diff cache if it was awaiting approval
+    this._diffOutputCache.delete(id);
 
     return true;
   }
@@ -312,8 +319,97 @@ export class JobService {
       this.appendOutput(job.id, "\n[Job force-killed]");
     }
 
-    // Clear all listeners
+    // Clear all listeners and stdin writers
     this.outputListeners.clear();
+    this.stdinWriters.clear();
+    this.approvalListeners.clear();
+  }
+
+  /**
+   * Register a stdin writer for interactive processes
+   */
+  registerStdinWriter(id: string, writer: (data: string) => void) {
+    this.stdinWriters.set(id, writer);
+  }
+
+  /**
+   * Unregister stdin writer
+   */
+  unregisterStdinWriter(id: string) {
+    this.stdinWriters.delete(id);
+  }
+
+  /**
+   * Set job as awaiting approval and store the diff output
+   */
+  setAwaitingApproval(id: string, diffOutput: string[]) {
+    this.db.run(
+      "UPDATE jobs SET status = 'awaiting_approval' WHERE id = ?",
+      [id]
+    );
+
+    // Store diff output in memory (not persisted to DB to avoid bloat)
+    // We'll fetch it via getJob which will include it
+    const job = this.getJob(id);
+    if (job) {
+      // Notify listeners about the status change
+      const listeners = this.approvalListeners.get(id) || [];
+      // Store diff in a temporary map
+      this._diffOutputCache.set(id, diffOutput);
+    }
+  }
+
+  private _diffOutputCache: Map<string, string[]> = new Map();
+
+  /**
+   * Get diff output for a job awaiting approval
+   */
+  getDiffOutput(id: string): string[] | null {
+    return this._diffOutputCache.get(id) || null;
+  }
+
+  /**
+   * Send approval response to waiting job
+   */
+  sendApprovalResponse(id: string, approved: boolean): boolean {
+    const job = this.getJob(id);
+    if (!job || job.status !== "awaiting_approval") {
+      return false;
+    }
+
+    // Update status back to running if approved, cancelled if rejected
+    if (approved) {
+      this.updateJobStatus(id, "running");
+      this.appendOutput(id, "\n✓ Deploy approved by user\n");
+    } else {
+      this.appendOutput(id, "\n✗ Deploy rejected by user");
+      this.updateJobStatus(id, "cancelled");
+    }
+
+    // Clear the diff cache
+    this._diffOutputCache.delete(id);
+
+    return true;
+  }
+
+  /**
+   * Subscribe to approval status changes
+   */
+  subscribeToApproval(id: string, listener: (approved: boolean) => void): () => void {
+    if (!this.approvalListeners.has(id)) {
+      this.approvalListeners.set(id, []);
+    }
+    this.approvalListeners.get(id)!.push(listener);
+
+    return () => {
+      const listeners = this.approvalListeners.get(id);
+      if (listeners) {
+        const index = listeners.indexOf(listener);
+        if (index > -1) {
+          listeners.splice(index, 1);
+        }
+      }
+    };
   }
 
   /**
@@ -391,7 +487,7 @@ export class JobService {
   }
 
   private rowToJob(row: JobRow): Job {
-    return {
+    const job: Job = {
       id: row.id,
       type: row.type as JobType,
       target: row.target,
@@ -402,6 +498,17 @@ export class JobService {
       completedAt: row.completed_at,
       error: row.error,
     };
+
+    // Add approval-related fields if applicable
+    if (job.status === "awaiting_approval") {
+      job.awaitingApproval = true;
+      const diffOutput = this._diffOutputCache.get(row.id);
+      if (diffOutput) {
+        job.diffOutput = diffOutput;
+      }
+    }
+
+    return job;
   }
 
   /**

@@ -38,6 +38,7 @@ export class LambdaBuilderService {
   /**
    * Discover shared .NET projects in the backend/Shared folder
    * These are commonly referenced by multiple lambdas
+   * Excludes test projects (*.Test.csproj)
    */
   async discoverSharedProjects(backendPath: string): Promise<SharedProject[]> {
     const sharedDir = path.join(backendPath, "Shared");
@@ -59,6 +60,10 @@ export class LambdaBuilderService {
               await scanDir(fullPath);
             }
           } else if (entry.name.endsWith(".csproj")) {
+            // Skip test projects
+            if (entry.name.includes(".Test.") || entry.name.endsWith(".Tests.csproj")) {
+              continue;
+            }
             const name = entry.name.replace(".csproj", "");
             projects.push({
               name,

@@ -301,6 +301,11 @@ export class InfraService {
         continue;
       }
 
+      // Skip test projects
+      if (file.includes(".Test.") || file.includes(".Tests.")) {
+        continue;
+      }
+
       const handlerPath = path.join(handlersPath, handlerName);
       const projectDir = path.join(handlersPath, path.dirname(file));
       const outputPath = path.join(projectDir, "bin", "Release", "net8.0", `${parts[2].replace(".csproj", "")}.zip`);
