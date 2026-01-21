@@ -247,6 +247,8 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [isLive, setIsLive] = useState(true);
 
   const fetchDashboard = async (isRefresh = false) => {
     if (isRefresh) {
@@ -263,6 +265,7 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
       }
       const dashboardData = await response.json();
       setData(dashboardData);
+      setLastUpdated(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load dashboard");
     } finally {
@@ -271,9 +274,37 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
     }
   };
 
+  // SSE connection for live updates
   useEffect(() => {
-    fetchDashboard();
-  }, []);
+    if (!isLive) return;
+
+    const eventSource = new EventSource("/api/dashboard/stream");
+
+    eventSource.onmessage = (event) => {
+      try {
+        const newData = JSON.parse(event.data);
+        if (newData.error) {
+          console.error("Dashboard SSE error:", newData.error);
+          return;
+        }
+        setData(newData);
+        setLastUpdated(new Date(newData.timestamp || Date.now()));
+        setLoading(false);
+        setError(null);
+      } catch (err) {
+        console.error("Failed to parse dashboard SSE data:", err);
+      }
+    };
+
+    eventSource.onerror = (err) => {
+      console.error("Dashboard SSE connection error:", err);
+      // Don't set error state - just log it, the connection will retry automatically
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [isLive]);
 
   const handleIssueClick = (issueKey: string) => {
     navigate(`/tickets/${issueKey}`);
@@ -313,18 +344,44 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
     return null;
   }
 
+  const formatLastUpdated = (date: Date) => {
+    return date.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  };
+
   return (
     <div className="dashboard-page">
       <div className="dashboard-header">
-        <h1>Dashboard</h1>
-        <button
-          className="btn-secondary"
-          onClick={() => fetchDashboard(true)}
-          disabled={refreshing}
-        >
-          <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
+        <div className="dashboard-header-title">
+          <h1>Dashboard</h1>
+          {lastUpdated && (
+            <span className="dashboard-last-updated">
+              Last updated: {formatLastUpdated(lastUpdated)}
+              {isLive && <span className="live-indicator" title="Live updates enabled" />}
+            </span>
+          )}
+        </div>
+        <div className="dashboard-header-actions">
+          <label className="toggle-label">
+            <input
+              type="checkbox"
+              checked={isLive}
+              onChange={(e) => setIsLive(e.target.checked)}
+            />
+            <span>Live</span>
+          </label>
+          <button
+            className="btn-secondary"
+            onClick={() => fetchDashboard(true)}
+            disabled={refreshing}
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div className="dashboard-grid">

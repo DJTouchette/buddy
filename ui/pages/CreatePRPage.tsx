@@ -102,6 +102,7 @@ export function CreatePRPage({ navigate }: CreatePRPageProps) {
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [addJiraComment, setAddJiraComment] = useState(true); // Pre-checked by default
+  const [moveToCodeReview, setMoveToCodeReview] = useState(true); // Pre-checked by default
 
   // Diff state
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -422,6 +423,22 @@ ${prTitle}`;
         }
       }
 
+      // Move ticket to Code Review if checkbox is checked
+      if (moveToCodeReview && ticketKey) {
+        try {
+          await fetch(`/api/jira/tickets/${ticketKey}/transition`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              statusName: "Code Review",
+            }),
+          });
+        } catch (transitionErr) {
+          // Don't fail the PR creation if transition fails
+          console.error("Failed to move ticket to Code Review:", transitionErr);
+        }
+      }
+
       // Navigate to the new PR
       navigate(`/prs/${data.pr.pullRequestId}`);
     } catch (err) {
@@ -649,7 +666,7 @@ ${prTitle}`;
               />
             </div>
 
-            {/* JIRA Comment Checkbox */}
+            {/* JIRA Options */}
             {ticketKey && (
               <div className="form-section">
                 <label className="checkbox-label">
@@ -659,6 +676,14 @@ ${prTitle}`;
                     onChange={(e) => setAddJiraComment(e.target.checked)}
                   />
                   <span>Add comment to JIRA ticket ({ticketKey}) with PR link</span>
+                </label>
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={moveToCodeReview}
+                    onChange={(e) => setMoveToCodeReview(e.target.checked)}
+                  />
+                  <span>Move ticket to Code Review</span>
                 </label>
               </div>
             )}
