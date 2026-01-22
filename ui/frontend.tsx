@@ -5,6 +5,7 @@ import "./styles.css";
 import { Layout } from "./components/Layout";
 import { SetupWizard } from "./components/SetupWizard";
 import { DashboardPage } from "./pages/DashboardPage";
+import { StatsPage } from "./pages/StatsPage";
 import { TicketsPage } from "./pages/TicketsPage";
 import { TicketDetailPage } from "./pages/TicketDetailPage";
 import { PRsPage } from "./pages/PRsPage";
@@ -12,6 +13,7 @@ import { PRDetailPage } from "./pages/PRDetailPage";
 import { CreatePRPage } from "./pages/CreatePRPage";
 import { GitPage } from "./pages/GitPage";
 import { InfraPage } from "./pages/InfraPage";
+import { JobsPage } from "./pages/JobsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 interface ConfigStatus {
@@ -87,6 +89,8 @@ function App() {
       case "/":
       case "/dashboard":
         return <DashboardPage navigate={navigate} />;
+      case "/stats":
+        return <StatsPage navigate={navigate} />;
       case "/tickets":
         return <TicketsPage navigate={navigate} />;
       case "/prs":
@@ -95,6 +99,8 @@ function App() {
         return <GitPage />;
       case "/infra":
         return <InfraPage />;
+      case "/jobs":
+        return <JobsPage navigate={navigate} />;
       case "/settings":
         return <SettingsPage />;
       default:

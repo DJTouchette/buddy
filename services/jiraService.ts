@@ -119,7 +119,7 @@ export class JiraService {
       body: JSON.stringify({
         jql,
         maxResults,
-        fields: ["summary", "status", "assignee", "issuetype", "description", "created", "updated", "priority", "attachment", "subtasks", "parent"],
+        fields: ["summary", "status", "assignee", "issuetype", "description", "created", "updated", "priority", "attachment", "subtasks", "parent", "resolutiondate"],
       }),
     });
     return response.issues;
@@ -468,9 +468,10 @@ export class JiraService {
   // Convert issue to branch name format: CAS-123-Some-Description
   issueToBranchName(issue: JiraIssue): string {
     const summary = issue.fields.summary
-      .replace(/[^a-zA-Z0-9\s-]/g, "") // Remove special chars
+      .replace(/-/g, " ")              // Treat hyphens as spaces
+      .replace(/[^a-zA-Z0-9\s]/g, "")  // Remove special chars
       .trim()
-      .split(/\s+/) // Split on whitespace
+      .split(/\s+/) // Split on whitespace (handles multiple spaces)
       .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()) // Title case
       .join("-");
 

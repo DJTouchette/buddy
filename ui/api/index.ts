@@ -9,9 +9,11 @@ import { settingsRoutes } from "./settings";
 import { infraRoutes } from "./infra";
 import { jobsRoutes } from "./jobs";
 import { dashboardRoutes } from "./dashboard";
+import { statsRoutes } from "./stats";
+import { aiRoutes } from "./ai";
 
 export type { ApiContext, Services, ValidatedJiraConfig, ValidatedAzureConfig } from "./context";
-export { CACHE_KEY_TICKETS, CACHE_KEY_PRS } from "./context";
+export { CACHE_KEY_TICKETS, CACHE_KEY_PRS, CACHE_KEY_DASHBOARD } from "./context";
 
 /**
  * Combines all API route modules into a single routes object
@@ -28,5 +30,7 @@ export function createApiRoutes(ctx: ApiContext) {
     ...infraRoutes({ cacheService: ctx.cacheService, jobService: ctx.jobService, configService: ctx.configService }),
     ...jobsRoutes({ cacheService: ctx.cacheService, jobService: ctx.jobService, configService: ctx.configService }),
     ...dashboardRoutes(ctx),
+    ...statsRoutes(ctx),
+    ...aiRoutes(ctx),
   };
 }

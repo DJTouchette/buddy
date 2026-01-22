@@ -277,10 +277,12 @@ export class RepoService {
     baseBranch: string
   ): Promise<{ success: boolean; branchName?: string; error?: string }> {
     // Generate branch name from ticket
+    // Remove hyphens (treat as space) and special chars, then collapse multiple spaces
     const sanitizedTitle = ticketTitle
       .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, "")
-      .replace(/\s+/g, "-")
+      .replace(/-/g, " ")           // Treat hyphens as spaces
+      .replace(/[^a-z0-9\s]/g, "")  // Remove special chars
+      .replace(/\s+/g, "-")         // Replace one or more spaces with single hyphen
       .substring(0, 50)
       .replace(/-+$/, "");
 

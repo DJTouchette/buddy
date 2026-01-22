@@ -34,9 +34,11 @@ export interface ApiContext {
   jobService: JobService;
   getServices: () => Promise<Services>;
   refreshCache: () => Promise<void>;
+  refreshDashboard: () => Promise<any>;
   restartPolling: () => Promise<void>;
   getLastRefreshTime: () => number;
 }
 
 export const CACHE_KEY_TICKETS = "tickets";
 export const CACHE_KEY_PRS = "prs";
+export const CACHE_KEY_DASHBOARD = "dashboard";

@@ -324,6 +324,31 @@ export class AzureDevOpsService {
   }
 
   /**
+   * Get completed PRs created by the current user within the last N days
+   */
+  async getCompletedPullRequests(days: number = 365): Promise<PullRequest[]> {
+    // Get current user first
+    const connectionData = await this.request<any>(
+      `https://dev.azure.com/${this.organization}/_apis/connectionData?api-version=7.0-preview`
+    );
+    const userId = connectionData.authenticatedUser?.id;
+
+    if (!userId) {
+      return [];
+    }
+
+    // Calculate date range
+    const minDate = new Date();
+    minDate.setDate(minDate.getDate() - days);
+    const minDateStr = minDate.toISOString();
+
+    const response = await this.request<{ value: Omit<PullRequest, "webUrl">[] }>(
+      `/git/repositories/${this.repositoryId}/pullrequests?searchCriteria.status=completed&searchCriteria.creatorId=${userId}&searchCriteria.minTime=${minDateStr}&$top=500&api-version=7.0`
+    );
+    return response.value.map((pr) => this.enrichPR(pr));
+  }
+
+  /**
    * Get PRs where current user is assigned as a reviewer
    */
   async getPRsToReview(): Promise<PullRequest[]> {

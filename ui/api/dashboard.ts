@@ -1,4 +1,5 @@
 import type { ApiContext } from "./context";
+import { CACHE_KEY_DASHBOARD } from "./context";
 
 export function dashboardRoutes(ctx: ApiContext) {
   return {
@@ -24,104 +25,25 @@ export function dashboardRoutes(ctx: ApiContext) {
       },
     },
 
-    // GET /api/dashboard - Get all dashboard data in one call
+    // GET /api/dashboard - Get all dashboard data in one call (uses cache)
     "/api/dashboard": {
-      GET: async () => {
+      GET: async (req: Request) => {
         try {
-          const { jiraService, azureDevOpsService, jiraConfig } = await ctx.getServices();
+          const url = new URL(req.url);
+          const forceRefresh = url.searchParams.get("refresh") === "true";
 
-          // Fetch base data in parallel
-          const [myIssues, myPRs, prsToReview, allActivePRs] = await Promise.all([
-            jiraService.getMyIssues().catch(() => []),
-            azureDevOpsService.getMyPullRequests().catch(() => []),
-            azureDevOpsService.getPRsToReview().catch(() => []),
-            azureDevOpsService.getActivePullRequests().catch(() => []),
-          ]);
-
-          // Get current user ID for filtering
-          const connectionData = await (azureDevOpsService as any).request(
-            `https://dev.azure.com/${(azureDevOpsService as any).organization}/_apis/connectionData?api-version=7.0-preview`
-          ).catch(() => ({ authenticatedUser: { id: null } }));
-          const currentUserId = connectionData.authenticatedUser?.id;
-
-          // Failed Builds - Check my PRs for failed checks
-          const failedBuilds: typeof myPRs = [];
-          for (const pr of myPRs) {
-            try {
-              const checks = await azureDevOpsService.getPRChecks(pr.pullRequestId);
-              const hasFailed = checks.some(c => c.status === "rejected" || c.status === "broken");
-              if (hasFailed) {
-                failedBuilds.push({ ...pr, _failedChecks: checks.filter(c => c.status === "rejected" || c.status === "broken") });
-              }
-            } catch {
-              // Skip if we can't get checks
+          // Check cache first (unless force refresh)
+          if (!forceRefresh) {
+            const cached = ctx.cacheService.get(CACHE_KEY_DASHBOARD);
+            if (cached) {
+              // cached.data contains the actual dashboard data
+              return Response.json({ ...cached.data, fromCache: true });
             }
           }
 
-          // Stale PRs - PRs not updated in 7+ days
-          const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
-          const stalePRs = allActivePRs.filter(pr => {
-            const creationDate = new Date((pr as any).creationDate).getTime();
-            return creationDate < sevenDaysAgo;
-          });
-
-          // Blocked/Waiting - My PRs where someone requested changes (vote = -5)
-          const blockedPRs = myPRs.filter(pr => {
-            const reviewers = (pr as any).reviewers || [];
-            return reviewers.some((r: any) => r.vote === -5 && !r.isContainer);
-          });
-
-          // Team Overview - Other people's PRs (excluding mine)
-          const teamPRs = allActivePRs.filter(pr => {
-            const creatorId = (pr as any).createdBy?.id;
-            return creatorId !== currentUserId;
-          });
-
-          // Recent Activity - Get comments from my PRs (last 5 PRs max)
-          const recentActivity: Array<{
-            prId: number;
-            prTitle: string;
-            comment: string;
-            author: string;
-            date: string;
-            webUrl: string;
-          }> = [];
-
-          for (const pr of myPRs.slice(0, 5)) {
-            try {
-              const threads = await azureDevOpsService.getPRThreads(pr.pullRequestId);
-              for (const thread of threads.slice(0, 3)) {
-                const firstComment = thread.comments[0];
-                if (firstComment && firstComment.content) {
-                  recentActivity.push({
-                    prId: pr.pullRequestId,
-                    prTitle: pr.title,
-                    comment: firstComment.content.slice(0, 150) + (firstComment.content.length > 150 ? "..." : ""),
-                    author: firstComment.author.displayName,
-                    date: firstComment.publishedDate,
-                    webUrl: azureDevOpsService.getPRThreadUrl(pr.pullRequestId, thread.id),
-                  });
-                }
-              }
-            } catch {
-              // Skip if we can't get threads
-            }
-          }
-
-          // Sort by date descending and limit
-          recentActivity.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-          return Response.json({
-            myIssues,
-            myPRs,
-            prsToReview,
-            failedBuilds,
-            stalePRs,
-            blockedPRs,
-            teamPRs,
-            recentActivity: recentActivity.slice(0, 10),
-            jiraHost: jiraConfig.host,
-          });
+          // No cache or force refresh - fetch fresh data
+          const data = await ctx.refreshDashboard();
+          return Response.json(data);
         } catch (error) {
           return Response.json({ error: String(error) }, { status: 500 });
         }
@@ -172,125 +94,43 @@ export function dashboardRoutes(ctx: ApiContext) {
       GET: async (req: Request) => {
         const REFRESH_INTERVAL = 60000; // 1 minute
 
-        const fetchDashboardData = async () => {
-          try {
-            const { jiraService, azureDevOpsService, jiraConfig } = await ctx.getServices();
-
-            // Fetch base data in parallel
-            const [myIssues, myPRs, prsToReview, allActivePRs] = await Promise.all([
-              jiraService.getMyIssues().catch(() => []),
-              azureDevOpsService.getMyPullRequests().catch(() => []),
-              azureDevOpsService.getPRsToReview().catch(() => []),
-              azureDevOpsService.getActivePullRequests().catch(() => []),
-            ]);
-
-            // Get current user ID for filtering
-            const connectionData = await (azureDevOpsService as any).request(
-              `https://dev.azure.com/${(azureDevOpsService as any).organization}/_apis/connectionData?api-version=7.0-preview`
-            ).catch(() => ({ authenticatedUser: { id: null } }));
-            const currentUserId = connectionData.authenticatedUser?.id;
-
-            // Failed Builds - Check my PRs for failed checks
-            const failedBuilds: typeof myPRs = [];
-            for (const pr of myPRs) {
-              try {
-                const checks = await azureDevOpsService.getPRChecks(pr.pullRequestId);
-                const hasFailed = checks.some(c => c.status === "rejected" || c.status === "broken");
-                if (hasFailed) {
-                  failedBuilds.push({ ...pr, _failedChecks: checks.filter(c => c.status === "rejected" || c.status === "broken") });
-                }
-              } catch {
-                // Skip if we can't get checks
-              }
-            }
-
-            // Stale PRs - PRs not updated in 7+ days
-            const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
-            const stalePRs = allActivePRs.filter(pr => {
-              const creationDate = new Date((pr as any).creationDate).getTime();
-              return creationDate < sevenDaysAgo;
-            });
-
-            // Blocked/Waiting - My PRs where someone requested changes (vote = -5)
-            const blockedPRs = myPRs.filter(pr => {
-              const reviewers = (pr as any).reviewers || [];
-              return reviewers.some((r: any) => r.vote === -5 && !r.isContainer);
-            });
-
-            // Team Overview - Other people's PRs (excluding mine)
-            const teamPRs = allActivePRs.filter(pr => {
-              const creatorId = (pr as any).createdBy?.id;
-              return creatorId !== currentUserId;
-            });
-
-            // Recent Activity - Get comments from my PRs (last 5 PRs max)
-            const recentActivity: Array<{
-              prId: number;
-              prTitle: string;
-              comment: string;
-              author: string;
-              date: string;
-              webUrl: string;
-            }> = [];
-
-            for (const pr of myPRs.slice(0, 5)) {
-              try {
-                const threads = await azureDevOpsService.getPRThreads(pr.pullRequestId);
-                for (const thread of threads.slice(0, 3)) {
-                  const firstComment = thread.comments[0];
-                  if (firstComment && firstComment.content) {
-                    recentActivity.push({
-                      prId: pr.pullRequestId,
-                      prTitle: pr.title,
-                      comment: firstComment.content.slice(0, 150) + (firstComment.content.length > 150 ? "..." : ""),
-                      author: firstComment.author.displayName,
-                      date: firstComment.publishedDate,
-                      webUrl: azureDevOpsService.getPRThreadUrl(pr.pullRequestId, thread.id),
-                    });
-                  }
-                }
-              } catch {
-                // Skip if we can't get threads
-              }
-            }
-
-            // Sort by date descending and limit
-            recentActivity.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-            return {
-              myIssues,
-              myPRs,
-              prsToReview,
-              failedBuilds,
-              stalePRs,
-              blockedPRs,
-              teamPRs,
-              recentActivity: recentActivity.slice(0, 10),
-              jiraHost: jiraConfig.host,
-              timestamp: Date.now(),
-            };
-          } catch (error) {
-            return { error: String(error), timestamp: Date.now() };
-          }
-        };
-
         const stream = new ReadableStream({
           async start(controller) {
             let isAborted = false;
 
-            // Send initial data
-            try {
-              const initialData = await fetchDashboardData();
+            // Send cached data immediately if available
+            const cached = ctx.cacheService.get(CACHE_KEY_DASHBOARD);
+            if (cached) {
+              // cached.data contains the actual dashboard data
               controller.enqueue(
-                new TextEncoder().encode(`data: ${JSON.stringify(initialData)}\n\n`)
+                new TextEncoder().encode(`data: ${JSON.stringify({ ...cached.data, fromCache: true })}\n\n`)
               );
-            } catch (err) {
-              controller.enqueue(
-                new TextEncoder().encode(`data: ${JSON.stringify({ error: String(err) })}\n\n`)
-              );
+
+              // Trigger background refresh
+              ctx.refreshDashboard().then((freshData) => {
+                if (!isAborted) {
+                  controller.enqueue(
+                    new TextEncoder().encode(`data: ${JSON.stringify(freshData)}\n\n`)
+                  );
+                }
+              }).catch((err) => {
+                console.error("Background dashboard refresh failed:", err);
+              });
+            } else {
+              // No cache - fetch fresh data
+              try {
+                const freshData = await ctx.refreshDashboard();
+                controller.enqueue(
+                  new TextEncoder().encode(`data: ${JSON.stringify(freshData)}\n\n`)
+                );
+              } catch (err) {
+                controller.enqueue(
+                  new TextEncoder().encode(`data: ${JSON.stringify({ error: String(err) })}\n\n`)
+                );
+              }
             }
 
-            // Set up interval to send updates
+            // Set up interval to send updates (every minute)
             const interval = setInterval(async () => {
               if (isAborted) {
                 clearInterval(interval);
@@ -298,7 +138,7 @@ export function dashboardRoutes(ctx: ApiContext) {
               }
 
               try {
-                const data = await fetchDashboardData();
+                const data = await ctx.refreshDashboard();
                 controller.enqueue(
                   new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`)
                 );

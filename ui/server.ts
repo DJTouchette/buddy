@@ -6,7 +6,7 @@ import { LinkingService } from "../services/linkingService";
 import { CacheService } from "../services/cacheService";
 import { NotesService } from "../services/notesService";
 import { JobService } from "../services/jobService";
-import { createApiRoutes, CACHE_KEY_TICKETS, CACHE_KEY_PRS } from "./api";
+import { createApiRoutes, CACHE_KEY_TICKETS, CACHE_KEY_PRS, CACHE_KEY_DASHBOARD } from "./api";
 import type { ApiContext, Services, ValidatedJiraConfig } from "./api";
 
 export async function startUIServer(port: number) {
@@ -84,7 +84,7 @@ export async function startUIServer(port: number) {
 
     try {
       console.log("[Cache] Refreshing data...");
-      const { linkingService, jiraConfig } = await getServices();
+      const { linkingService, jiraConfig, jiraService, azureDevOpsService } = await getServices();
 
       // Fetch fresh data
       const tickets = await linkingService.getTicketsWithPRs();
@@ -95,11 +95,109 @@ export async function startUIServer(port: number) {
       cacheService.set(CACHE_KEY_TICKETS, { tickets, jiraHost: jiraConfig.host }, pollIntervalMinutes);
       cacheService.set(CACHE_KEY_PRS, { prs, jiraHost: jiraConfig.host }, pollIntervalMinutes);
 
+      // Also refresh dashboard data
+      try {
+        const dashboardData = await fetchDashboardData(jiraService, azureDevOpsService, jiraConfig.host);
+        cacheService.set(CACHE_KEY_DASHBOARD, dashboardData, pollIntervalMinutes);
+        console.log("[Cache] Dashboard data refreshed");
+      } catch (dashErr) {
+        console.error("[Cache] Error refreshing dashboard:", dashErr);
+      }
+
       lastRefreshTime = Date.now();
       console.log("[Cache] Data refreshed successfully");
     } catch (error) {
       console.error("[Cache] Error refreshing data:", error);
     }
+  }
+
+  // Fetch dashboard data (shared between cache refresh and API)
+  async function fetchDashboardData(jiraService: any, azureDevOpsService: any, jiraHost: string) {
+    // Fetch base data in parallel
+    const [myIssues, myPRs, prsToReview, allActivePRs] = await Promise.all([
+      jiraService.getMyIssues().catch(() => []),
+      azureDevOpsService.getMyPullRequests().catch(() => []),
+      azureDevOpsService.getPRsToReview().catch(() => []),
+      azureDevOpsService.getActivePullRequests().catch(() => []),
+    ]);
+
+    // Get current user ID for filtering
+    const connectionData = await azureDevOpsService.request(
+      `https://dev.azure.com/${azureDevOpsService.organization}/_apis/connectionData?api-version=7.0-preview`
+    ).catch(() => ({ authenticatedUser: { id: null } }));
+    const currentUserId = connectionData.authenticatedUser?.id;
+
+    // Failed Builds - Check my PRs for failed checks
+    const failedBuilds: any[] = [];
+    for (const pr of myPRs) {
+      try {
+        const checks = await azureDevOpsService.getPRChecks(pr.pullRequestId);
+        const hasFailed = checks.some((c: any) => c.status === "rejected" || c.status === "broken");
+        if (hasFailed) {
+          failedBuilds.push({ ...pr, _failedChecks: checks.filter((c: any) => c.status === "rejected" || c.status === "broken") });
+        }
+      } catch {
+        // Skip if we can't get checks
+      }
+    }
+
+    // Stale PRs - PRs not updated in 7+ days
+    const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+    const stalePRs = allActivePRs.filter((pr: any) => {
+      const creationDate = new Date(pr.creationDate).getTime();
+      return creationDate < sevenDaysAgo;
+    });
+
+    // Blocked/Waiting - My PRs where someone requested changes (vote = -5)
+    const blockedPRs = myPRs.filter((pr: any) => {
+      const reviewers = pr.reviewers || [];
+      return reviewers.some((r: any) => r.vote === -5 && !r.isContainer);
+    });
+
+    // Team Overview - Other people's PRs (excluding mine)
+    const teamPRs = allActivePRs.filter((pr: any) => {
+      const creatorId = pr.createdBy?.id;
+      return creatorId !== currentUserId;
+    });
+
+    // Recent Activity - Get comments from my PRs (last 5 PRs max)
+    const recentActivity: any[] = [];
+    for (const pr of myPRs.slice(0, 5)) {
+      try {
+        const threads = await azureDevOpsService.getPRThreads(pr.pullRequestId);
+        for (const thread of threads.slice(0, 3)) {
+          const firstComment = thread.comments[0];
+          if (firstComment && firstComment.content) {
+            recentActivity.push({
+              prId: pr.pullRequestId,
+              prTitle: pr.title,
+              comment: firstComment.content.slice(0, 150) + (firstComment.content.length > 150 ? "..." : ""),
+              author: firstComment.author.displayName,
+              date: firstComment.publishedDate,
+              webUrl: azureDevOpsService.getPRThreadUrl(pr.pullRequestId, thread.id),
+            });
+          }
+        }
+      } catch {
+        // Skip if we can't get threads
+      }
+    }
+
+    // Sort by date descending and limit
+    recentActivity.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    return {
+      myIssues,
+      myPRs,
+      prsToReview,
+      failedBuilds,
+      stalePRs,
+      blockedPRs,
+      teamPRs,
+      recentActivity: recentActivity.slice(0, 10),
+      jiraHost,
+      timestamp: Date.now(),
+    };
   }
 
   // Start polling
@@ -129,6 +227,20 @@ export async function startUIServer(port: number) {
     await startPolling();
   }
 
+  // Refresh just dashboard data (for background updates)
+  async function refreshDashboard() {
+    try {
+      const { jiraService, azureDevOpsService, jiraConfig } = await getServices();
+      const dashboardData = await fetchDashboardData(jiraService, azureDevOpsService, jiraConfig.host);
+      const pollIntervalMinutes = await configService.getPollIntervalMinutes();
+      cacheService.set(CACHE_KEY_DASHBOARD, dashboardData, pollIntervalMinutes);
+      return dashboardData;
+    } catch (error) {
+      console.error("[Cache] Error refreshing dashboard:", error);
+      throw error;
+    }
+  }
+
   // Create API context for route handlers
   const apiContext: ApiContext = {
     configService,
@@ -137,6 +249,7 @@ export async function startUIServer(port: number) {
     jobService,
     getServices,
     refreshCache,
+    refreshDashboard,
     restartPolling,
     getLastRefreshTime: () => lastRefreshTime,
   };
@@ -152,12 +265,14 @@ export async function startUIServer(port: number) {
       // Serve React app for all non-API routes
       "/": index,
       "/dashboard": index,
+      "/stats": index,
       "/tickets": index,
       "/tickets/*": index,  // Detail pages like /tickets/PROJ-123
       "/prs": index,
       "/prs/*": index,      // Detail pages like /prs/456
       "/git": index,
       "/infra": index,
+      "/jobs": index,
       "/settings": index,
 
       // API routes from modules

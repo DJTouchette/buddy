@@ -46,6 +46,7 @@ export function Layout({ children, currentPath, navigate }: LayoutProps) {
     { path: "/prs", label: "Pull Requests" },
     { path: "/git", label: "Git" },
     { path: "/infra", label: "Infrastructure" },
+    { path: "/jobs", label: "Jobs" },
   ];
 
   const isActive = (path: string) => {

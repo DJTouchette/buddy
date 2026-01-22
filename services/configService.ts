@@ -35,6 +35,10 @@ export interface BuddyConfig {
   ui?: {
     notesDir?: string;
   };
+  ai?: {
+    enabled?: boolean;
+    claudePath?: string;  // Custom path to claude CLI if not in PATH
+  };
   settings?: {
     pollIntervalMinutes?: number;
     currentEnvironment?: string;
@@ -209,5 +213,27 @@ export class ConfigService {
     const config = await this.load();
     config.jira = { ...config.jira, workflowStatuses: statuses };
     await this.save(config);
+  }
+
+  // AI config operations
+  async getAIConfig(): Promise<BuddyConfig["ai"]> {
+    const config = await this.load();
+    return config.ai;
+  }
+
+  async setAIConfig(aiConfig: Partial<NonNullable<BuddyConfig["ai"]>>): Promise<void> {
+    const config = await this.load();
+    config.ai = { ...config.ai, ...aiConfig };
+    await this.save(config);
+  }
+
+  async isAIEnabled(): Promise<boolean> {
+    const aiConfig = await this.getAIConfig();
+    return aiConfig?.enabled ?? false;
+  }
+
+  async getClaudePath(): Promise<string> {
+    const aiConfig = await this.getAIConfig();
+    return aiConfig?.claudePath ?? "claude";
   }
 }

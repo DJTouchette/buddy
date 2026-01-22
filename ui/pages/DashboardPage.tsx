@@ -17,7 +17,8 @@ import {
   Hourglass,
   MessageSquare,
   Users,
-  AlertTriangle
+  AlertTriangle,
+  BarChart3,
 } from "lucide-react";
 import type { JiraIssue } from "../../services/jiraService";
 
@@ -63,6 +64,8 @@ interface DashboardData {
   teamPRs: DashboardPR[];
   recentActivity: RecentActivity[];
   jiraHost: string;
+  timestamp?: number;
+  fromCache?: boolean;
 }
 
 interface DashboardPageProps {
@@ -253,19 +256,19 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
   const fetchDashboard = async (isRefresh = false) => {
     if (isRefresh) {
       setRefreshing(true);
-    } else {
+    } else if (!data) {
       setLoading(true);
     }
     setError(null);
 
     try {
-      const response = await fetch("/api/dashboard");
+      const response = await fetch("/api/dashboard" + (isRefresh ? "?refresh=true" : ""));
       if (!response.ok) {
         throw new Error("Failed to load dashboard");
       }
       const dashboardData = await response.json();
       setData(dashboardData);
-      setLastUpdated(new Date());
+      setLastUpdated(new Date(dashboardData.timestamp || Date.now()));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load dashboard");
     } finally {
@@ -274,9 +277,15 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
     }
   };
 
-  // SSE connection for live updates
+  // Initial fetch - load cached data immediately
   useEffect(() => {
-    if (!isLive) return;
+    fetchDashboard();
+  }, []);
+
+  // SSE connection for live updates (only after initial data is loaded)
+  useEffect(() => {
+    // Don't connect SSE until we have initial data loaded
+    if (!isLive || loading) return;
 
     const eventSource = new EventSource("/api/dashboard/stream");
 
@@ -287,10 +296,11 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
           console.error("Dashboard SSE error:", newData.error);
           return;
         }
-        setData(newData);
-        setLastUpdated(new Date(newData.timestamp || Date.now()));
-        setLoading(false);
-        setError(null);
+        // Validate data has expected structure before setting
+        if (newData.jiraHost !== undefined) {
+          setData(newData);
+          setLastUpdated(new Date(newData.timestamp || Date.now()));
+        }
       } catch (err) {
         console.error("Failed to parse dashboard SSE data:", err);
       }
@@ -304,7 +314,7 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
     return () => {
       eventSource.close();
     };
-  }, [isLive]);
+  }, [isLive, loading]);
 
   const handleIssueClick = (issueKey: string) => {
     navigate(`/tickets/${issueKey}`);
@@ -344,6 +354,16 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
     return null;
   }
 
+  // Ensure all arrays exist with fallbacks
+  const myIssues = data.myIssues || [];
+  const myPRs = data.myPRs || [];
+  const prsToReview = data.prsToReview || [];
+  const failedBuilds = data.failedBuilds || [];
+  const stalePRs = data.stalePRs || [];
+  const blockedPRs = data.blockedPRs || [];
+  const teamPRs = data.teamPRs || [];
+  const recentActivity = data.recentActivity || [];
+
   const formatLastUpdated = (date: Date) => {
     return date.toLocaleTimeString(undefined, {
       hour: "2-digit",
@@ -365,6 +385,13 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
           )}
         </div>
         <div className="dashboard-header-actions">
+          <button
+            className="btn-secondary"
+            onClick={() => navigate("/stats")}
+          >
+            <BarChart3 className="w-4 h-4" />
+            Stats
+          </button>
           <label className="toggle-label">
             <input
               type="checkbox"
@@ -389,11 +416,11 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
         <DashboardSection
           title="My Issues"
           icon={Ticket}
-          count={data.myIssues.length}
+          count={myIssues.length}
           emptyMessage="No issues assigned to you"
         >
           <div className="dashboard-cards">
-            {data.myIssues.map((issue) => (
+            {myIssues.map((issue) => (
               <IssueCard
                 key={issue.key}
                 issue={issue}
@@ -408,11 +435,11 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
         <DashboardSection
           title="My Pull Requests"
           icon={GitPullRequest}
-          count={data.myPRs.length}
+          count={myPRs.length}
           emptyMessage="No open pull requests"
         >
           <div className="dashboard-cards">
-            {data.myPRs.map((pr) => (
+            {myPRs.map((pr) => (
               <PRCard
                 key={pr.pullRequestId}
                 pr={pr}
@@ -426,11 +453,11 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
         <DashboardSection
           title="PRs to Review"
           icon={Eye}
-          count={data.prsToReview.length}
+          count={prsToReview.length}
           emptyMessage="No pull requests to review"
         >
           <div className="dashboard-cards">
-            {data.prsToReview.map((pr) => (
+            {prsToReview.map((pr) => (
               <PRCard
                 key={pr.pullRequestId}
                 pr={pr}
@@ -445,12 +472,12 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
         <DashboardSection
           title="Failed Builds"
           icon={XCircle}
-          count={data.failedBuilds.length}
+          count={failedBuilds.length}
           emptyMessage="No failed builds"
           variant="error"
         >
           <div className="dashboard-cards">
-            {data.failedBuilds.map((pr) => (
+            {failedBuilds.map((pr) => (
               <PRCard
                 key={pr.pullRequestId}
                 pr={pr}
@@ -464,12 +491,12 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
         <DashboardSection
           title="Changes Requested"
           icon={AlertTriangle}
-          count={data.blockedPRs.length}
+          count={blockedPRs.length}
           emptyMessage="No PRs waiting for changes"
           variant="warning"
         >
           <div className="dashboard-cards">
-            {data.blockedPRs.map((pr) => (
+            {blockedPRs.map((pr) => (
               <PRCard
                 key={pr.pullRequestId}
                 pr={pr}
@@ -483,12 +510,12 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
         <DashboardSection
           title="Stale PRs (7+ days)"
           icon={Hourglass}
-          count={data.stalePRs.length}
+          count={stalePRs.length}
           emptyMessage="No stale pull requests"
           variant="warning"
         >
           <div className="dashboard-cards">
-            {data.stalePRs.map((pr) => (
+            {stalePRs.map((pr) => (
               <PRCard
                 key={pr.pullRequestId}
                 pr={pr}
@@ -503,11 +530,11 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
         <DashboardSection
           title="Recent Activity"
           icon={MessageSquare}
-          count={data.recentActivity.length}
+          count={recentActivity.length}
           emptyMessage="No recent activity"
         >
           <div className="dashboard-cards">
-            {data.recentActivity.map((activity, idx) => (
+            {recentActivity.map((activity, idx) => (
               <ActivityCard
                 key={`${activity.prId}-${idx}`}
                 activity={activity}
@@ -521,11 +548,11 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
         <DashboardSection
           title="Team Activity"
           icon={Users}
-          count={data.teamPRs.length}
+          count={teamPRs.length}
           emptyMessage="No team activity"
         >
           <div className="dashboard-cards">
-            {data.teamPRs.slice(0, 10).map((pr) => (
+            {teamPRs.slice(0, 10).map((pr) => (
               <PRCard
                 key={pr.pullRequestId}
                 pr={pr}

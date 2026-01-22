@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import * as path from "path";
 import * as os from "os";
 
-export type JobType = "build" | "deploy" | "diff" | "synth" | "deploy-lambda" | "tail-logs";
+export type JobType = "build" | "deploy" | "diff" | "synth" | "deploy-lambda" | "tail-logs" | "ai-fix";
 export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "awaiting_approval";
 
 export interface Job {
@@ -17,6 +17,7 @@ export interface Job {
   error: string | null;
   awaitingApproval?: boolean;
   diffOutput?: string[]; // The diff portion for parsing/display
+  tmuxSession?: string; // tmux session name for attaching
 }
 
 export interface CreateJobOptions {
@@ -34,6 +35,7 @@ interface JobRow {
   started_at: number;
   completed_at: number | null;
   error: string | null;
+  tmux_session: string | null;
 }
 
 export class JobService {
@@ -67,9 +69,17 @@ export class JobService {
         output TEXT DEFAULT '[]',
         started_at INTEGER,
         completed_at INTEGER,
-        error TEXT
+        error TEXT,
+        tmux_session TEXT
       )
     `);
+
+    // Migration: add tmux_session column if it doesn't exist
+    try {
+      this.db.run(`ALTER TABLE jobs ADD COLUMN tmux_session TEXT`);
+    } catch {
+      // Column already exists
+    }
 
     this.db.run(`
       CREATE TABLE IF NOT EXISTS lambda_builds (
@@ -271,6 +281,26 @@ export class JobService {
    */
   unregisterProcess(id: string) {
     this.runningProcesses.delete(id);
+  }
+
+  /**
+   * Set tmux session name for a job
+   */
+  setTmuxSession(id: string, sessionName: string) {
+    this.db.run(
+      "UPDATE jobs SET tmux_session = ? WHERE id = ?",
+      [sessionName, id]
+    );
+  }
+
+  /**
+   * Clear tmux session name for a job
+   */
+  clearTmuxSession(id: string) {
+    this.db.run(
+      "UPDATE jobs SET tmux_session = NULL WHERE id = ?",
+      [id]
+    );
   }
 
   /**
