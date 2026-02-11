@@ -29,12 +29,12 @@ export function createApiRoutes(ctx: ApiContext) {
     ...reposRoutes(ctx),
     ...gitRoutes(ctx),
     ...settingsRoutes(ctx),
-    ...infraRoutes({ cacheService: ctx.cacheService, jobService: ctx.jobService, configService: ctx.configService }),
-    ...jobsRoutes({ cacheService: ctx.cacheService, jobService: ctx.jobService, configService: ctx.configService }),
+    ...infraRoutes(ctx),
+    ...jobsRoutes(ctx),
     ...dashboardRoutes(ctx),
     ...statsRoutes(ctx),
     ...aiRoutes(ctx),
-    ...appsyncRoutes({ configService: ctx.configService, cacheService: ctx.cacheService }),
-    ...ctestRoutes({ jobService: ctx.jobService, cacheService: ctx.cacheService }),
+    ...appsyncRoutes(ctx),
+    ...ctestRoutes(ctx),
   };
 }

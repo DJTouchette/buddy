@@ -37,6 +37,7 @@ export interface ApiContext {
   refreshDashboard: () => Promise<any>;
   restartPolling: () => Promise<void>;
   getLastRefreshTime: () => number;
+  invalidateServiceCache: () => void;
 }
 
 export const CACHE_KEY_TICKETS = "tickets";

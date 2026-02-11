@@ -18,9 +18,12 @@ export async function startUIServer(port: number) {
 
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let lastRefreshTime = Date.now();
+  let cachedServices: Services | null = null;
 
-  // Helper to get services (with config validation)
+  // Helper to get services (with config validation and caching)
   async function getServices(): Promise<Services> {
+    if (cachedServices) return cachedServices;
+
     const jiraConfig = await configService.getJiraConfig();
     const azureConfig = await configService.getAzureDevOpsConfig();
 
@@ -55,7 +58,13 @@ export async function startUIServer(port: number) {
     const azureDevOpsService = new AzureDevOpsService(validatedAzureConfig);
     const linkingService = new LinkingService(jiraService, azureDevOpsService);
 
-    return { jiraService, azureDevOpsService, linkingService, jiraConfig: validatedJiraConfig };
+    cachedServices = { jiraService, azureDevOpsService, linkingService, jiraConfig: validatedJiraConfig };
+    return cachedServices;
+  }
+
+  // Invalidate the cached services (e.g., after settings change)
+  function invalidateServiceCache() {
+    cachedServices = null;
   }
 
   // Check if services are configured
@@ -252,6 +261,7 @@ export async function startUIServer(port: number) {
     refreshDashboard,
     restartPolling,
     getLastRefreshTime: () => lastRefreshTime,
+    invalidateServiceCache,
   };
 
   // Initial data load

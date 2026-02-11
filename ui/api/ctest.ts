@@ -1,19 +1,14 @@
-import type { JobService } from "../../services/jobService";
-import type { CacheService } from "../../services/cacheService";
+import type { ApiContext } from "./context";
 import { readFileSync, existsSync, statSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import * as os from "os";
+import { handler, errorResponse } from "./helpers";
 
 const REPO_ROOT = join(os.homedir(), "work", "2cassadol");
 const BACKEND_DIR = join(REPO_ROOT, "backend");
 const SLN_FILE = join(BACKEND_DIR, "backend.sln");
 const CACHE_DIR = join(os.homedir(), ".cache", "ctest");
 const DOTNET_WARNS = "--nowarn:NU1803,CS0162,CS0168,CS0219";
-
-export interface CTestApiContext {
-  jobService: JobService;
-  cacheService: CacheService;
-}
 
 interface TestProject {
   name: string;
@@ -158,7 +153,7 @@ function parseResultLine(line: string): {
 async function spawnAndStream(
   args: string[],
   jobId: string,
-  ctx: CTestApiContext,
+  ctx: ApiContext,
   onLine?: (line: string) => void,
 ): Promise<number> {
   const cmdStr = args.map(shellQuote).join(" ");
@@ -208,7 +203,7 @@ async function spawnAndStream(
 async function buildProject(
   csprojPath: string,
   jobId: string,
-  ctx: CTestApiContext,
+  ctx: ApiContext,
 ): Promise<boolean> {
   const name = csprojPath.split("/").pop()!;
   ctx.jobService.appendOutput(jobId, `Restoring ${name}...`);
@@ -259,7 +254,7 @@ async function executeTestRun(
   csprojPath: string,
   testNames: string[] | null,
   integration: boolean,
-  ctx: CTestApiContext,
+  ctx: ApiContext,
 ) {
   ctx.jobService.updateJobStatus(jobId, "running");
   const catFilter = integration ? "" : "Category!=Integration";
@@ -530,102 +525,90 @@ async function discoverTestsForProject(
 
 // ── Routes ───────────────────────────────────────────────────────────────
 
-export function ctestRoutes(ctx: CTestApiContext) {
+export function ctestRoutes(ctx: ApiContext) {
   return {
     // GET /api/ctest/projects — list all test projects
     "/api/ctest/projects": {
-      GET: async () => {
-        try {
-          const projects = parseTestProjects();
-          const result = projects.map((p) => ({
-            name: p.name,
-            csprojPath: p.csprojPath,
-            cachedTestCount: getCachedTests(p.name).length,
-          }));
-          return Response.json({ projects: result });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
-        }
-      },
+      GET: handler(async () => {
+        const projects = parseTestProjects();
+        const result = projects.map((p) => ({
+          name: p.name,
+          csprojPath: p.csprojPath,
+          cachedTestCount: getCachedTests(p.name).length,
+        }));
+        return Response.json({ projects: result });
+      }),
     },
 
     // GET /api/ctest/tests/:project — discover tests for a project
     "/api/ctest/tests/:project": {
-      GET: async (req: Request & { params: { project: string } }) => {
-        try {
-          const projectName = decodeURIComponent(req.params.project);
-          const url = new URL(req.url);
-          const rebuild = url.searchParams.get("rebuild") === "true";
+      GET: handler(async (req: Request) => {
+        const projectName = decodeURIComponent((req as any).params.project);
+        const url = new URL(req.url);
+        const rebuild = url.searchParams.get("rebuild") === "true";
 
-          const projects = parseTestProjects();
-          const project = projects.find((p) => p.name === projectName);
-          if (!project) {
-            return Response.json({ error: `Project not found: ${projectName}` }, { status: 404 });
-          }
-
-          const tests = await discoverTestsForProject(project.name, project.csprojPath, rebuild);
-          return Response.json({
-            project: project.name,
-            tests: tests.map((fqn) => ({ fqn, shortName: shortName(fqn) })),
-          });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
+        const projects = parseTestProjects();
+        const project = projects.find((p) => p.name === projectName);
+        if (!project) {
+          return errorResponse(`Project not found: ${projectName}`, 404);
         }
-      },
+
+        const tests = await discoverTestsForProject(project.name, project.csprojPath, rebuild);
+        return Response.json({
+          project: project.name,
+          tests: tests.map((fqn) => ({ fqn, shortName: shortName(fqn) })),
+        });
+      }),
     },
 
     // GET /api/ctest/run/:id/status — get structured test run status
     "/api/ctest/run/:id/status": {
-      GET: async (req: Request & { params: { id: string } }) => {
-        const state = testRunStates.get(req.params.id);
+      GET: handler(async (req: Request) => {
+        const state = testRunStates.get((req as any).params.id);
         if (!state) {
-          return Response.json({ error: "No active test run found" }, { status: 404 });
+          return errorResponse("No active test run found", 404);
         }
         return Response.json({ state });
-      },
+      }),
     },
 
     // POST /api/ctest/run — run tests (creates a job)
     "/api/ctest/run": {
-      POST: async (req: Request) => {
-        try {
-          const body = (await req.json()) as {
-            project: string;
-            tests?: string[];
-            integration?: boolean;
-          };
+      POST: handler(async (req: Request) => {
+        const body = (await req.json()) as {
+          project: string;
+          tests?: string[];
+          integration?: boolean;
+        };
 
-          if (!body.project) {
-            return Response.json({ error: "Missing project name" }, { status: 400 });
-          }
-
-          const projects = parseTestProjects();
-          const project = projects.find((p) => p.name === body.project);
-          if (!project) {
-            return Response.json({ error: `Project not found: ${body.project}` }, { status: 404 });
-          }
-
-          const target = body.tests && body.tests.length > 0
-            ? `${project.name} (${body.tests.length} tests)`
-            : project.name;
-
-          const job = ctx.jobService.createJob({ type: "ctest", target });
-
-          // Run asynchronously
-          executeTestRun(
-            job.id,
-            project.name,
-            project.csprojPath,
-            body.tests || null,
-            body.integration || false,
-            ctx,
-          );
-
-          return Response.json({ job });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
+        if (!body.project) {
+          return errorResponse("Missing project name", 400);
         }
-      },
+
+        const projects = parseTestProjects();
+        const project = projects.find((p) => p.name === body.project);
+        if (!project) {
+          return errorResponse(`Project not found: ${body.project}`, 404);
+        }
+
+        const target = body.tests && body.tests.length > 0
+          ? `${project.name} (${body.tests.length} tests)`
+          : project.name;
+
+        const job = ctx.jobService.createJob({ type: "ctest", target });
+
+        // Run asynchronously
+        executeTestRun(
+          job.id,
+          project.name,
+          project.csprojPath,
+          body.tests || null,
+          body.integration || false,
+          ctx,
+        );
+
+        return Response.json({ job });
+      }),
     },
   };
 }

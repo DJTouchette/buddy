@@ -1,159 +1,113 @@
-import { JobService, type JobType } from "../../services/jobService";
+import type { JobType } from "../../services/jobService";
 import { InfraService } from "../../services/infraService";
 import { LambdaBuilderService } from "../../services/lambdaBuilderService";
-import type { CacheService } from "../../services/cacheService";
-import type { ConfigService } from "../../services/configService";
+import type { ApiContext } from "./context";
+import { handler, errorResponse } from "./helpers";
 import { isProtectedEnvironment } from "./infra";
-import * as os from "os";
+import { executeJob } from "./jobs/executor";
+import type { JobContext } from "./jobs/strategies/types";
 
-// On Windows, need to use .cmd extension for npm/yarn scripts
-const isWindows = os.platform() === "win32";
-const yarnCmd = isWindows ? "yarn.cmd" : "yarn";
-const npxCmd = isWindows ? "npx.cmd" : "npx";
-const awsCmd = isWindows ? "aws.cmd" : "aws";
-
-/**
- * Strip ANSI escape codes from a string
- * Handles color codes, cursor movement, line clearing, etc.
- */
-function stripAnsi(str: string): string {
-  // Regex to match all ANSI escape sequences
-  // eslint-disable-next-line no-control-regex
-  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]|\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, '');
-}
-
-export interface JobsApiContext {
-  cacheService: CacheService;
-  jobService: JobService;
-  configService: ConfigService;
-}
-
-export function jobsRoutes(ctx: JobsApiContext) {
+export function jobsRoutes(ctx: ApiContext) {
   const infraService = new InfraService();
   const builderService = new LambdaBuilderService(ctx.jobService);
 
+  const jobCtx: JobContext = {
+    jobService: ctx.jobService,
+    configService: ctx.configService,
+    cacheService: ctx.cacheService,
+    infraService,
+    builderService,
+  };
+
   return {
-    // GET /api/jobs - List all jobs
     "/api/jobs": {
-      GET: async (req: Request) => {
-        try {
-          const url = new URL(req.url);
-          const activeOnly = url.searchParams.get("active") === "true";
+      GET: handler(async (req: Request) => {
+        const url = new URL(req.url);
+        const activeOnly = url.searchParams.get("active") === "true";
 
-          const jobs = activeOnly
-            ? ctx.jobService.getActiveJobs()
-            : ctx.jobService.getRecentJobs(30);
+        const jobs = activeOnly
+          ? ctx.jobService.getActiveJobs()
+          : ctx.jobService.getRecentJobs(30);
 
-          return Response.json({ jobs });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
+        return Response.json({ jobs });
+      }),
+
+      POST: handler(async (req: Request) => {
+        const body = (await req.json()) as {
+          type: JobType;
+          target: string;
+          skipBuild?: boolean;
+          awsFunctionName?: string;
+        };
+
+        if (!body.type || !body.target) {
+          return errorResponse("Missing type or target", 400);
         }
-      },
 
-      // POST /api/jobs - Create a new job
-      POST: async (req: Request) => {
-        try {
-          const body = (await req.json()) as {
-            type: JobType;
-            target: string;
-            skipBuild?: boolean;
-            awsFunctionName?: string; // For deploy-lambda jobs
-          };
+        const selectedRepo = ctx.cacheService.getSelectedRepo();
+        if (!selectedRepo) {
+          return errorResponse(
+            "No repository selected. Go to Git page and select a repo first.",
+            400
+          );
+        }
 
-          if (!body.type || !body.target) {
-            return Response.json({ error: "Missing type or target" }, { status: 400 });
+        const paths = infraService.getInfraPaths(selectedRepo.path);
+        if (!paths) {
+          return errorResponse(
+            "Selected repository doesn't have infrastructure folder",
+            400
+          );
+        }
+
+        const job = ctx.jobService.createJob({
+          type: body.type,
+          target: body.target,
+        });
+
+        // Check for protected environment on deploy/deploy-lambda
+        if (body.type === "deploy" || body.type === "deploy-lambda") {
+          const currentEnv = await ctx.configService.getCurrentEnvironment();
+          if (await isProtectedEnvironment(currentEnv, ctx.configService)) {
+            ctx.jobService.updateJobStatus(
+              job.id,
+              "failed",
+              `Cannot deploy to protected environment "${currentEnv}". Switch to a personal environment first.`
+            );
+            return Response.json({ job });
           }
+        }
 
-          // Validate target based on type
-          const selectedRepo = ctx.cacheService.getSelectedRepo();
-          if (!selectedRepo) {
-            return Response.json({
-              error: "No repository selected. Go to Git page and select a repo first.",
-            }, { status: 400 });
-          }
-
-          const paths = infraService.getInfraPaths(selectedRepo.path);
-          if (!paths) {
-            return Response.json({
-              error: "Selected repository doesn't have infrastructure folder",
-            }, { status: 400 });
-          }
-
-          // Create the job
-          const job = ctx.jobService.createJob({
-            type: body.type,
-            target: body.target,
-          });
-
-          // Execute the job asynchronously
-          if (body.type === "build") {
-            executeBuildJob(job.id, body.target, paths.backendPath, ctx, infraService, builderService);
-          } else if (body.type === "deploy") {
-            // Check for protected environment on CDK deploy
-            const currentEnv = await ctx.configService.getCurrentEnvironment();
-            if (await isProtectedEnvironment(currentEnv, ctx.configService)) {
-              ctx.jobService.updateJobStatus(
-                job.id,
-                "failed",
-                `Cannot deploy to protected environment "${currentEnv}". Switch to a personal environment first.`
-              );
-            } else {
-              executeCdkJob(job.id, body.type, body.target, paths.infraPath, ctx);
-            }
-          } else if (body.type === "diff" || body.type === "synth") {
-            executeCdkJob(job.id, body.type, body.target, paths.infraPath, ctx);
-          } else if (body.type === "deploy-lambda") {
-            // Check for protected environment
-            const currentEnv = await ctx.configService.getCurrentEnvironment();
-            if (await isProtectedEnvironment(currentEnv, ctx.configService)) {
-              ctx.jobService.updateJobStatus(
-                job.id,
-                "failed",
-                `Cannot deploy to protected environment "${currentEnv}". Switch to a personal environment first.`
-              );
-            } else if (!body.awsFunctionName) {
-              ctx.jobService.updateJobStatus(job.id, "failed", "Missing AWS function name");
-            } else {
-              executeDeployLambdaJob(
-                job.id,
-                body.target, // local handler name
-                body.awsFunctionName,
-                paths.backendPath,
-                ctx,
-                infraService,
-                builderService
-              );
-            }
-          } else if (body.type === "tail-logs") {
-            // body.target is the AWS function name for tail-logs
-            executeTailLogsJob(job.id, body.target, ctx, infraService);
-          }
-
+        // Additional validation for deploy-lambda
+        if (body.type === "deploy-lambda" && !body.awsFunctionName) {
+          ctx.jobService.updateJobStatus(job.id, "failed", "Missing AWS function name");
           return Response.json({ job });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
         }
-      },
+
+        // Execute the job asynchronously (fire-and-forget)
+        executeJob(job.id, body.type, {
+          target: body.target,
+          backendPath: paths.backendPath,
+          infraPath: paths.infraPath,
+          awsFunctionName: body.awsFunctionName,
+          skipBuild: body.skipBuild,
+        }, jobCtx);
+
+        return Response.json({ job });
+      }),
     },
 
-    // GET /api/jobs/:id - Get job by ID
     "/api/jobs/:id": {
-      GET: async (req: Request & { params: { id: string } }) => {
-        try {
-          const job = ctx.jobService.getJob(req.params.id);
-
-          if (!job) {
-            return Response.json({ error: "Job not found" }, { status: 404 });
-          }
-
-          return Response.json({ job });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
+      GET: handler(async (req: Request & { params: { id: string } }) => {
+        const job = ctx.jobService.getJob(req.params.id);
+        if (!job) {
+          return errorResponse("Job not found", 404);
         }
-      },
+        return Response.json({ job });
+      }),
     },
 
-    // GET /api/jobs/:id/output - Stream job output via SSE
+    // SSE streaming endpoint - stays here as HTTP handling
     "/api/jobs/:id/output": {
       GET: async (req: Request & { params: { id: string } }) => {
         const jobId = req.params.id;
@@ -163,17 +117,14 @@ export function jobsRoutes(ctx: JobsApiContext) {
           return Response.json({ error: "Job not found" }, { status: 404 });
         }
 
-        // Create SSE stream
         const stream = new ReadableStream({
           start(controller) {
             const encoder = new TextEncoder();
 
-            // Send existing output first
             for (const line of job.output) {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ line })}\n\n`));
             }
 
-            // If job is already complete, close the stream
             if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
               controller.enqueue(
                 encoder.encode(`data: ${JSON.stringify({ done: true, status: job.status })}\n\n`)
@@ -182,7 +133,6 @@ export function jobsRoutes(ctx: JobsApiContext) {
               return;
             }
 
-            // Subscribe to new output
             const unsubscribe = ctx.jobService.subscribeToOutput(jobId, (line) => {
               try {
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ line })}\n\n`));
@@ -191,7 +141,6 @@ export function jobsRoutes(ctx: JobsApiContext) {
               }
             });
 
-            // Check periodically if job is done
             const checkInterval = setInterval(() => {
               const currentJob = ctx.jobService.getJob(jobId);
               if (
@@ -215,7 +164,6 @@ export function jobsRoutes(ctx: JobsApiContext) {
               }
             }, 500);
 
-            // Cleanup on abort
             req.signal?.addEventListener("abort", () => {
               clearInterval(checkInterval);
               unsubscribe();
@@ -233,768 +181,125 @@ export function jobsRoutes(ctx: JobsApiContext) {
       },
     },
 
-    // POST /api/jobs/:id/cancel - Cancel a running job
     "/api/jobs/:id/cancel": {
-      POST: async (req: Request & { params: { id: string } }) => {
-        try {
-          const success = ctx.jobService.cancelJob(req.params.id);
-
-          if (!success) {
-            return Response.json({ error: "Cannot cancel job (not running or not found)" }, { status: 400 });
-          }
-
-          return Response.json({ success: true });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
+      POST: handler(async (req: Request & { params: { id: string } }) => {
+        const success = ctx.jobService.cancelJob(req.params.id);
+        if (!success) {
+          return errorResponse("Cannot cancel job (not running or not found)", 400);
         }
-      },
+        return Response.json({ success: true });
+      }),
     },
 
-    // POST /api/jobs/:id/respond - Send approval response to awaiting job
     "/api/jobs/:id/respond": {
-      POST: async (req: Request & { params: { id: string } }) => {
-        try {
-          const body = (await req.json()) as { approved: boolean };
-          const jobId = req.params.id;
+      POST: handler(async (req: Request & { params: { id: string } }) => {
+        const body = (await req.json()) as { approved: boolean };
+        const jobId = req.params.id;
 
-          const job = ctx.jobService.getJob(jobId);
-          if (!job) {
-            return Response.json({ error: "Job not found" }, { status: 404 });
-          }
-
-          if (job.status !== "awaiting_approval") {
-            return Response.json({ error: "Job is not awaiting approval" }, { status: 400 });
-          }
-
-          const success = ctx.jobService.sendApprovalResponse(jobId, body.approved);
-
-          if (!success) {
-            return Response.json({ error: "Failed to send response to job" }, { status: 500 });
-          }
-
-          return Response.json({ success: true, approved: body.approved });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
+        const job = ctx.jobService.getJob(jobId);
+        if (!job) {
+          return errorResponse("Job not found", 404);
         }
-      },
+
+        if (job.status !== "awaiting_approval") {
+          return errorResponse("Job is not awaiting approval", 400);
+        }
+
+        const success = ctx.jobService.sendApprovalResponse(jobId, body.approved);
+        if (!success) {
+          return errorResponse("Failed to send response to job");
+        }
+
+        return Response.json({ success: true, approved: body.approved });
+      }),
     },
 
-    // GET /api/jobs/:id/diff - Get diff output for a job awaiting approval
     "/api/jobs/:id/diff": {
-      GET: async (req: Request & { params: { id: string } }) => {
-        try {
-          const jobId = req.params.id;
-          const job = ctx.jobService.getJob(jobId);
+      GET: handler(async (req: Request & { params: { id: string } }) => {
+        const jobId = req.params.id;
+        const job = ctx.jobService.getJob(jobId);
 
-          if (!job) {
-            return Response.json({ error: "Job not found" }, { status: 404 });
-          }
-
-          const diffOutput = ctx.jobService.getDiffOutput(jobId);
-
-          return Response.json({
-            diffOutput: diffOutput || job.output,
-            status: job.status,
-            target: job.target,
-          });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
+        if (!job) {
+          return errorResponse("Job not found", 404);
         }
-      },
+
+        const diffOutput = ctx.jobService.getDiffOutput(jobId);
+
+        return Response.json({
+          diffOutput: diffOutput || job.output,
+          status: job.status,
+          target: job.target,
+        });
+      }),
     },
 
-    // GET /api/jobs/builds - Get lambda build status
     "/api/jobs/builds": {
-      GET: async () => {
-        try {
-          const buildInfo = ctx.jobService.getAllLambdaBuildInfo();
-          const builds: Record<string, {
-            lastBuiltAt: number | null;
-            lastBuildStatus: string | null;
-            deploymentZipExists: boolean;
-          }> = {};
+      GET: handler(async () => {
+        const buildInfo = ctx.jobService.getAllLambdaBuildInfo();
+        const builds: Record<string, {
+          lastBuiltAt: number | null;
+          lastBuildStatus: string | null;
+          deploymentZipExists: boolean;
+        }> = {};
 
-          buildInfo.forEach((info, name) => {
-            builds[name] = info;
-          });
+        buildInfo.forEach((info, name) => {
+          builds[name] = info;
+        });
 
-          return Response.json({ builds });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
-        }
-      },
+        return Response.json({ builds });
+      }),
     },
 
-    // POST /api/jobs/clear - Force clear all jobs and kill processes
     "/api/jobs/clear": {
-      POST: async () => {
-        try {
-          ctx.jobService.forceKillAll();
-          return Response.json({ success: true, message: "All jobs cleared and processes killed" });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
-        }
-      },
+      POST: handler(async () => {
+        ctx.jobService.forceKillAll();
+        return Response.json({ success: true, message: "All jobs cleared and processes killed" });
+      }),
     },
 
-    // GET /api/logs/:lambdaName - Get saved logs for a lambda
     "/api/logs/:lambdaName": {
-      GET: async (req: Request) => {
-        try {
-          const lambdaName = decodeURIComponent(req.params.lambdaName);
-          const logs = ctx.jobService.getSavedLogs(lambdaName);
-          return Response.json({ logs });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
-        }
-      },
+      GET: handler(async (req: Request) => {
+        const lambdaName = decodeURIComponent(req.params.lambdaName);
+        const logs = ctx.jobService.getSavedLogs(lambdaName);
+        return Response.json({ logs });
+      }),
     },
 
-    // POST /api/logs - Save a new log
     "/api/logs": {
-      POST: async (req: Request) => {
-        try {
-          const body = (await req.json()) as {
-            lambdaName: string;
-            name: string;
-            content: string;
-          };
+      POST: handler(async (req: Request) => {
+        const body = (await req.json()) as {
+          lambdaName: string;
+          name: string;
+          content: string;
+        };
 
-          if (!body.lambdaName || !body.name || !body.content) {
-            return Response.json({ error: "Missing lambdaName, name, or content" }, { status: 400 });
-          }
-
-          const log = ctx.jobService.saveLog(body.lambdaName, body.name, body.content);
-          return Response.json({ log });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
+        if (!body.lambdaName || !body.name || !body.content) {
+          return errorResponse("Missing lambdaName, name, or content", 400);
         }
-      },
+
+        const log = ctx.jobService.saveLog(body.lambdaName, body.name, body.content);
+        return Response.json({ log });
+      }),
     },
 
-    // GET /api/logs/view/:id - Get a single saved log
     "/api/logs/view/:id": {
-      GET: async (req: Request) => {
-        try {
-          const log = ctx.jobService.getSavedLog(req.params.id);
-          if (!log) {
-            return Response.json({ error: "Log not found" }, { status: 404 });
-          }
-          return Response.json({ log });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
+      GET: handler(async (req: Request) => {
+        const log = ctx.jobService.getSavedLog(req.params.id);
+        if (!log) {
+          return errorResponse("Log not found", 404);
         }
-      },
+        return Response.json({ log });
+      }),
     },
 
-    // DELETE /api/logs/:id - Delete a saved log
     "/api/logs/delete/:id": {
-      POST: async (req: Request) => {
-        try {
-          const success = ctx.jobService.deleteSavedLog(req.params.id);
-          if (!success) {
-            return Response.json({ error: "Log not found" }, { status: 404 });
-          }
-          return Response.json({ success: true });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
+      POST: handler(async (req: Request) => {
+        const success = ctx.jobService.deleteSavedLog(req.params.id);
+        if (!success) {
+          return errorResponse("Log not found", 404);
         }
-      },
+        return Response.json({ success: true });
+      }),
     },
   };
-}
-
-/**
- * Execute a build job asynchronously
- * Uses two-phase approach: build shared .NET projects first, then lambdas in parallel
- */
-async function executeBuildJob(
-  jobId: string,
-  target: string,
-  backendPath: string,
-  ctx: JobsApiContext,
-  infraService: InfraService,
-  builderService: LambdaBuilderService
-) {
-  try {
-    const lambdas = await infraService.discoverLambdas(backendPath);
-
-    if (target === "all") {
-      // Build all lambdas - uses two-phase approach for .NET
-      await builderService.buildAll(lambdas, jobId, undefined, backendPath);
-    } else if (target === "dotnet") {
-      // Build all .NET lambdas - uses two-phase approach
-      await builderService.buildByType(lambdas, target as any, jobId, backendPath);
-    } else if (["js", "python", "typescript-edge"].includes(target)) {
-      // Non-.NET types don't need shared project pre-build
-      await builderService.buildByType(lambdas, target as any, jobId);
-    } else {
-      // Build specific lambda by name
-      const lambda = lambdas.find((l) => l.name === target);
-      if (!lambda) {
-        ctx.jobService.updateJobStatus(jobId, "failed", `Lambda "${target}" not found`);
-        return;
-      }
-
-      ctx.jobService.updateJobStatus(jobId, "running");
-
-      // For single .NET lambda, still pre-build shared projects for faster subsequent builds
-      if (lambda.type === "dotnet") {
-        await builderService.buildSharedProjects(backendPath, jobId);
-      }
-
-      const result = await builderService.buildLambda(lambda, jobId);
-
-      if (result.success) {
-        ctx.jobService.updateJobStatus(jobId, "completed");
-      } else {
-        ctx.jobService.updateJobStatus(jobId, "failed", result.error);
-      }
-    }
-  } catch (error) {
-    ctx.jobService.updateJobStatus(jobId, "failed", String(error));
-  }
-}
-
-/**
- * Execute a CDK job asynchronously
- * For deploy commands, shows changeset and waits for user approval
- */
-async function executeCdkJob(
-  jobId: string,
-  command: "diff" | "deploy" | "synth",
-  target: string,
-  infraPath: string,
-  ctx: JobsApiContext
-) {
-  ctx.jobService.updateJobStatus(jobId, "running");
-  ctx.jobService.appendOutput(jobId, `=== Running CDK ${command} on ${target} ===`);
-  ctx.jobService.appendOutput(jobId, `Infrastructure path: ${infraPath}`);
-
-  try {
-    // Get current environment from configService (stores in buddy.json)
-    const currentEnv = await ctx.configService.getCurrentEnvironment();
-    const stage = await ctx.configService.getInfraStage();
-
-    if (!currentEnv) {
-      throw new Error("No environment selected. Please select an environment first.");
-    }
-
-    // Determine stack name
-    let stackName: string;
-    if (target === "static-backend") {
-      stackName = "backend";
-    } else if (target === "beanstalk-backend") {
-      stackName = "backend-beanstalk";
-    } else {
-      stackName = `${target}-${currentEnv}`;
-    }
-
-    // Set up environment variables
-    const env = {
-      ...process.env,
-      STACK: target,
-      SUFFIX: currentEnv,
-      INFRA_STAGE: stage,
-      REACT_APP_STAGE: stage,
-      NODE_OPTIONS: "--max_old_space_size=8192",
-      // Disable color output since we're displaying in a web UI
-      NO_COLOR: "1",
-      FORCE_COLOR: "0",
-    };
-
-    ctx.jobService.appendOutput(jobId, `Stack: ${stackName}`);
-    ctx.jobService.appendOutput(jobId, `Environment: ${currentEnv}`);
-    ctx.jobService.appendOutput(jobId, `Stage: ${stage}`);
-    ctx.jobService.appendOutput(jobId, ``);
-
-    // For deploy, use interactive mode to show changeset and wait for approval
-    if (command === "deploy") {
-      await executeCdkDeployWithApproval(jobId, stackName, infraPath, env, ctx);
-    } else {
-      // For diff/synth, run non-interactively
-      await executeCdkNonInteractive(jobId, command, stackName, infraPath, env, ctx);
-    }
-  } catch (error) {
-    ctx.jobService.appendOutput(jobId, `\n✗ Error: ${error}`);
-    ctx.jobService.updateJobStatus(jobId, "failed", String(error));
-  }
-}
-
-/**
- * Execute CDK deploy with approval - two phase approach:
- * 1. Run cdk diff to get changes
- * 2. Show approval modal
- * 3. If approved, run cdk deploy
- */
-async function executeCdkDeployWithApproval(
-  jobId: string,
-  stackName: string,
-  infraPath: string,
-  env: Record<string, string | undefined>,
-  ctx: JobsApiContext
-) {
-  // Phase 1: Run cdk diff to get the changes
-  ctx.jobService.appendOutput(jobId, `Phase 1: Calculating changes...`);
-  ctx.jobService.appendOutput(jobId, ``);
-  ctx.jobService.appendOutput(jobId, `> yarn cdk diff ${stackName}`);
-  ctx.jobService.appendOutput(jobId, ``);
-
-  const diffProc = Bun.spawn([yarnCmd, "cdk", "diff", stackName], {
-    cwd: infraPath,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  ctx.jobService.registerProcess(jobId, diffProc);
-
-  const diffOutput: string[] = [];
-  let hasChanges = false;
-
-  const streamDiffOutput = async (stream: ReadableStream<Uint8Array>) => {
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const rawLine of lines) {
-        const line = stripAnsi(rawLine);
-        diffOutput.push(line);
-        if (line.trim()) {
-          ctx.jobService.appendOutput(jobId, line);
-        }
-        // Detect if there are actual changes
-        if (line.match(/^\s*\[\+\]/) || line.match(/^\s*\[-\]/) || line.match(/^\s*\[~\]/)) {
-          hasChanges = true;
-        }
-        // Also check for "Resources" section or IAM changes
-        if (line.includes("IAM Statement Changes") || line.includes("Security Group Changes")) {
-          hasChanges = true;
-        }
-      }
-    }
-
-    if (buffer.trim()) {
-      const line = stripAnsi(buffer);
-      diffOutput.push(line);
-      ctx.jobService.appendOutput(jobId, line);
-    }
-  };
-
-  await Promise.all([
-    streamDiffOutput(diffProc.stdout),
-    streamDiffOutput(diffProc.stderr),
-  ]);
-
-  const diffExitCode = await diffProc.exited;
-  ctx.jobService.unregisterProcess(jobId);
-
-  // Exit code 1 means there are differences, 0 means no changes
-  if (diffExitCode !== 0 && diffExitCode !== 1) {
-    ctx.jobService.appendOutput(jobId, `\n✗ CDK diff failed with exit code ${diffExitCode}`);
-    ctx.jobService.updateJobStatus(jobId, "failed", `Diff failed with exit code ${diffExitCode}`);
-    return;
-  }
-
-  // Check if there are any changes to deploy
-  if (diffExitCode === 0 && !hasChanges) {
-    ctx.jobService.appendOutput(jobId, ``);
-    ctx.jobService.appendOutput(jobId, `✓ No changes to deploy - stack is up to date`);
-    ctx.jobService.updateJobStatus(jobId, "completed");
-    return;
-  }
-
-  // Phase 2: Wait for user approval
-  ctx.jobService.appendOutput(jobId, ``);
-  ctx.jobService.appendOutput(jobId, `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  ctx.jobService.appendOutput(jobId, `⏸️  Changes detected - waiting for approval...`);
-  ctx.jobService.appendOutput(jobId, `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-
-  // Set job to awaiting approval with the diff output
-  ctx.jobService.setAwaitingApproval(jobId, diffOutput);
-
-  // Wait for approval response
-  const approved = await waitForApproval(jobId, ctx);
-
-  if (!approved) {
-    ctx.jobService.appendOutput(jobId, ``);
-    ctx.jobService.appendOutput(jobId, `⏹️  Deploy rejected by user`);
-    ctx.jobService.updateJobStatus(jobId, "cancelled");
-    return;
-  }
-
-  // Phase 3: Run the actual deploy
-  ctx.jobService.appendOutput(jobId, ``);
-  ctx.jobService.appendOutput(jobId, `Phase 2: Deploying changes...`);
-  ctx.jobService.appendOutput(jobId, ``);
-  ctx.jobService.appendOutput(jobId, `> yarn cdk deploy ${stackName} --require-approval never`);
-  ctx.jobService.appendOutput(jobId, ``);
-
-  const deployProc = Bun.spawn([yarnCmd, "cdk", "deploy", stackName, "--require-approval", "never"], {
-    cwd: infraPath,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  ctx.jobService.registerProcess(jobId, deployProc);
-
-  const streamDeployOutput = async (stream: ReadableStream<Uint8Array>) => {
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const rawLine of lines) {
-        const line = stripAnsi(rawLine);
-        if (line.trim()) {
-          ctx.jobService.appendOutput(jobId, line);
-        }
-      }
-    }
-
-    if (buffer.trim()) {
-      ctx.jobService.appendOutput(jobId, stripAnsi(buffer));
-    }
-  };
-
-  await Promise.all([
-    streamDeployOutput(deployProc.stdout),
-    streamDeployOutput(deployProc.stderr),
-  ]);
-
-  const deployExitCode = await deployProc.exited;
-  ctx.jobService.unregisterProcess(jobId);
-
-  if (deployExitCode === 0) {
-    ctx.jobService.appendOutput(jobId, `\n✓ CDK deploy completed successfully`);
-    ctx.jobService.updateJobStatus(jobId, "completed");
-  } else {
-    ctx.jobService.appendOutput(jobId, `\n✗ CDK deploy failed with exit code ${deployExitCode}`);
-    ctx.jobService.updateJobStatus(jobId, "failed", `Exit code ${deployExitCode}`);
-  }
-}
-
-/**
- * Wait for user approval response
- */
-function waitForApproval(jobId: string, ctx: JobsApiContext): Promise<boolean> {
-  return new Promise((resolve) => {
-    // Check every 500ms if the job status changed from awaiting_approval
-    const checkInterval = setInterval(() => {
-      const job = ctx.jobService.getJob(jobId);
-      if (!job) {
-        clearInterval(checkInterval);
-        resolve(false);
-        return;
-      }
-
-      if (job.status === "running") {
-        // User approved
-        clearInterval(checkInterval);
-        resolve(true);
-      } else if (job.status === "cancelled" || job.status === "failed") {
-        // User rejected or job was cancelled
-        clearInterval(checkInterval);
-        resolve(false);
-      }
-      // If still awaiting_approval, keep waiting
-    }, 500);
-  });
-}
-
-/**
- * Execute CDK command non-interactively (for diff, synth)
- */
-async function executeCdkNonInteractive(
-  jobId: string,
-  command: "diff" | "synth",
-  stackName: string,
-  infraPath: string,
-  env: Record<string, string | undefined>,
-  ctx: JobsApiContext
-) {
-  const cdkArgs = ["cdk", command, stackName];
-
-  ctx.jobService.appendOutput(jobId, `> yarn ${cdkArgs.join(" ")}`);
-
-  const proc = Bun.spawn([yarnCmd, ...cdkArgs], {
-    cwd: infraPath,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  ctx.jobService.registerProcess(jobId, proc);
-
-  const streamOutput = async (stream: ReadableStream<Uint8Array>) => {
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const rawLine of lines) {
-        const line = stripAnsi(rawLine);
-        if (line.trim()) {
-          ctx.jobService.appendOutput(jobId, line);
-        }
-      }
-    }
-
-    if (buffer.trim()) {
-      ctx.jobService.appendOutput(jobId, stripAnsi(buffer));
-    }
-  };
-
-  await Promise.all([
-    streamOutput(proc.stdout),
-    streamOutput(proc.stderr),
-  ]);
-
-  const exitCode = await proc.exited;
-  ctx.jobService.unregisterProcess(jobId);
-
-  if (exitCode === 0) {
-    ctx.jobService.appendOutput(jobId, `\n✓ CDK ${command} completed successfully`);
-    ctx.jobService.updateJobStatus(jobId, "completed");
-  } else {
-    ctx.jobService.appendOutput(jobId, `\n✗ CDK ${command} failed with exit code ${exitCode}`);
-    ctx.jobService.updateJobStatus(jobId, "failed", `Exit code ${exitCode}`);
-  }
-}
-
-/**
- * Execute a deploy-lambda job (build + deploy single lambda to AWS)
- */
-async function executeDeployLambdaJob(
-  jobId: string,
-  localName: string,
-  awsFunctionName: string,
-  backendPath: string,
-  ctx: JobsApiContext,
-  infraService: InfraService,
-  builderService: LambdaBuilderService
-) {
-  ctx.jobService.updateJobStatus(jobId, "running");
-  ctx.jobService.appendOutput(jobId, `=== Deploy Lambda: ${localName} -> ${awsFunctionName} ===`);
-  ctx.jobService.appendOutput(jobId, ``);
-
-  try {
-    // Find the lambda
-    const lambdas = await infraService.discoverLambdas(backendPath);
-    const lambda = lambdas.find((l) => l.name === localName);
-
-    if (!lambda) {
-      throw new Error(`Lambda "${localName}" not found locally`);
-    }
-
-    // Step 1: Build the lambda
-    ctx.jobService.appendOutput(jobId, `[1/2] Building ${localName}...`);
-    ctx.jobService.appendOutput(jobId, ``);
-
-    const buildResult = await builderService.buildLambda(lambda, jobId);
-
-    if (!buildResult.success) {
-      throw new Error(`Build failed: ${buildResult.error}`);
-    }
-
-    ctx.jobService.appendOutput(jobId, ``);
-    ctx.jobService.appendOutput(jobId, `✓ Build completed`);
-    ctx.jobService.appendOutput(jobId, ``);
-
-    // Step 2: Deploy to AWS
-    ctx.jobService.appendOutput(jobId, `[2/2] Deploying to AWS Lambda: ${awsFunctionName}...`);
-    ctx.jobService.appendOutput(jobId, ``);
-
-    // Find the zip file path based on lambda type
-    let zipPath: string;
-    if (lambda.type === "dotnet") {
-      zipPath = lambda.outputPath;
-    } else {
-      zipPath = lambda.outputPath;
-    }
-
-    // Verify zip exists
-    const zipFile = Bun.file(zipPath);
-    if (!(await zipFile.exists())) {
-      throw new Error(`Deployment zip not found at: ${zipPath}`);
-    }
-
-    ctx.jobService.appendOutput(jobId, `> aws lambda update-function-code --function-name ${awsFunctionName} --zip-file fileb://${zipPath}`);
-
-    // Run AWS CLI to update the function code
-    const proc = Bun.spawn(
-      ["aws", "lambda", "update-function-code", "--function-name", awsFunctionName, "--zip-file", `fileb://${zipPath}`, "--no-cli-pager"],
-      {
-        cwd: backendPath,
-        stdout: "pipe",
-        stderr: "pipe",
-      }
-    );
-
-    ctx.jobService.registerProcess(jobId, proc);
-
-    // Stream output
-    const streamOutput = async (stream: ReadableStream<Uint8Array>) => {
-      const reader = stream.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const rawLine of lines) {
-          const line = stripAnsi(rawLine);
-          if (line.trim()) {
-            ctx.jobService.appendOutput(jobId, line);
-          }
-        }
-      }
-
-      if (buffer.trim()) {
-        ctx.jobService.appendOutput(jobId, stripAnsi(buffer));
-      }
-    };
-
-    await Promise.all([streamOutput(proc.stdout), streamOutput(proc.stderr)]);
-
-    const exitCode = await proc.exited;
-    ctx.jobService.unregisterProcess(jobId);
-
-    if (exitCode === 0) {
-      ctx.jobService.appendOutput(jobId, ``);
-      ctx.jobService.appendOutput(jobId, `✓ Successfully deployed ${localName} to ${awsFunctionName}`);
-      ctx.jobService.updateJobStatus(jobId, "completed");
-
-      // Invalidate AWS lambdas cache so next fetch gets fresh data
-      const currentEnv = await ctx.configService.getCurrentEnvironment();
-      if (currentEnv) {
-        ctx.cacheService.invalidate(`aws-lambdas-${currentEnv}`);
-      }
-    } else {
-      throw new Error(`AWS CLI failed with exit code ${exitCode}`);
-    }
-  } catch (error) {
-    ctx.jobService.appendOutput(jobId, ``);
-    ctx.jobService.appendOutput(jobId, `✗ Error: ${error}`);
-    ctx.jobService.updateJobStatus(jobId, "failed", String(error));
-  }
-}
-
-/**
- * Execute a tail-logs job (stream CloudWatch logs for a Lambda function)
- * Auto-reconnects when hitting event limit to continue streaming without losing logs
- */
-async function executeTailLogsJob(
-  jobId: string,
-  awsFunctionName: string,
-  ctx: JobsApiContext,
-  infraService: InfraService
-) {
-  ctx.jobService.updateJobStatus(jobId, "running");
-  ctx.jobService.appendOutput(jobId, `=== Tailing Logs: ${awsFunctionName} ===`);
-  ctx.jobService.appendOutput(jobId, `Log group: /aws/lambda/${awsFunctionName}`);
-  ctx.jobService.appendOutput(jobId, ``);
-  ctx.jobService.appendOutput(jobId, `Waiting for new log events...`);
-  ctx.jobService.appendOutput(jobId, ``);
-
-  // Create an abort controller for cancellation
-  const abortController = new AbortController();
-
-  // Store the abort function so the job can be cancelled
-  ctx.jobService.registerProcess(jobId, {
-    kill: () => abortController.abort(),
-  });
-
-  try {
-    let startTime = Date.now();
-    let lastEventTimestamp = startTime;
-    const eventsPerBatch = 500; // Reconnect after this many events
-
-    // Keep tailing until cancelled
-    while (!abortController.signal.aborted) {
-      // Start tailing logs from last event timestamp
-      const logGenerator = infraService.tailLambdaLogs(awsFunctionName, {
-        startTime: lastEventTimestamp,
-        pollIntervalMs: 2000,
-        signal: abortController.signal,
-      });
-
-      let eventCount = 0;
-
-      for await (const event of logGenerator) {
-        if (abortController.signal.aborted) break;
-
-        // Format the log event
-        const timestamp = new Date(event.timestamp).toLocaleTimeString();
-        const message = event.message.trim();
-
-        // Skip empty messages
-        if (!message) continue;
-
-        ctx.jobService.appendOutput(jobId, `[${timestamp}] ${message}`);
-        eventCount++;
-
-        // Track the latest event timestamp for reconnection
-        // Add 1ms to avoid duplicate events on reconnect
-        lastEventTimestamp = Math.max(lastEventTimestamp, event.timestamp + 1);
-
-        // Check if we've hit the batch limit - reconnect to continue
-        if (eventCount >= eventsPerBatch) {
-          ctx.jobService.appendOutput(jobId, ``);
-          ctx.jobService.appendOutput(jobId, `--- Reconnecting to continue streaming (${eventsPerBatch} events processed) ---`);
-          ctx.jobService.appendOutput(jobId, ``);
-          break;
-        }
-      }
-
-      // If aborted, exit the outer loop
-      if (abortController.signal.aborted) break;
-
-      // If we didn't hit the batch limit, the generator ended naturally
-      // This shouldn't normally happen with polling, but handle it gracefully
-      if (eventCount < eventsPerBatch) {
-        // Wait a bit and try again (generator might have errored internally)
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-    }
-
-    ctx.jobService.unregisterProcess(jobId);
-
-    ctx.jobService.appendOutput(jobId, ``);
-    ctx.jobService.appendOutput(jobId, `--- Log tailing stopped ---`);
-    ctx.jobService.updateJobStatus(jobId, "cancelled");
-  } catch (error: any) {
-    ctx.jobService.unregisterProcess(jobId);
-    ctx.jobService.appendOutput(jobId, ``);
-    ctx.jobService.appendOutput(jobId, `✗ Error: ${error.message || error}`);
-    ctx.jobService.updateJobStatus(jobId, "failed", String(error));
-  }
 }

@@ -4,19 +4,7 @@ import "./styles.css";
 
 import { Layout } from "./components/Layout";
 import { SetupWizard } from "./components/SetupWizard";
-import { DashboardPage } from "./pages/DashboardPage";
-import { StatsPage } from "./pages/StatsPage";
-import { TicketsPage } from "./pages/TicketsPage";
-import { TicketDetailPage } from "./pages/TicketDetailPage";
-import { PRsPage } from "./pages/PRsPage";
-import { PRDetailPage } from "./pages/PRDetailPage";
-import { CreatePRPage } from "./pages/CreatePRPage";
-import { GitPage } from "./pages/GitPage";
-import { InfraPage } from "./pages/InfraPage";
-import { AppSyncPage } from "./pages/AppSyncPage";
-import { JobsPage } from "./pages/JobsPage";
-import { SettingsPage } from "./pages/SettingsPage";
-import { CTestPage } from "./pages/CTestPage";
+import { matchRoute } from "./routes";
 
 interface ConfigStatus {
   configured: boolean;
@@ -70,48 +58,13 @@ function App() {
   };
 
   const renderPage = () => {
-    // Check for ticket detail page: /tickets/:key
-    const ticketMatch = currentPath.match(/^\/tickets\/([A-Z]+-\d+)$/i);
-    if (ticketMatch) {
-      return <TicketDetailPage ticketKey={ticketMatch[1].toUpperCase()} navigate={navigate} />;
+    const { component: Component, params } = matchRoute(currentPath);
+    // TicketDetailPage expects ticketKey to be uppercase
+    const processedParams = { ...params };
+    if (processedParams.ticketKey) {
+      processedParams.ticketKey = processedParams.ticketKey.toUpperCase();
     }
-
-    // Check for PR creation page first (before /prs/:id)
-    if (currentPath === "/prs/create") {
-      return <CreatePRPage navigate={navigate} />;
-    }
-
-    // Check for PR detail page: /prs/:id
-    const prMatch = currentPath.match(/^\/prs\/(\d+)$/);
-    if (prMatch) {
-      return <PRDetailPage prId={prMatch[1]} navigate={navigate} />;
-    }
-
-    switch (currentPath) {
-      case "/":
-      case "/dashboard":
-        return <DashboardPage navigate={navigate} />;
-      case "/stats":
-        return <StatsPage navigate={navigate} />;
-      case "/tickets":
-        return <TicketsPage navigate={navigate} />;
-      case "/prs":
-        return <PRsPage navigate={navigate} />;
-      case "/git":
-        return <GitPage />;
-      case "/infra":
-        return <InfraPage />;
-      case "/appsync":
-        return <AppSyncPage />;
-      case "/jobs":
-        return <JobsPage navigate={navigate} />;
-      case "/ctest":
-        return <CTestPage navigate={navigate} />;
-      case "/settings":
-        return <SettingsPage />;
-      default:
-        return <DashboardPage navigate={navigate} />;
-    }
+    return <Component navigate={navigate} {...processedParams} />;
   };
 
   // Show loading while checking config

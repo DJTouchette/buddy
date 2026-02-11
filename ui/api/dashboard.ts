@@ -1,97 +1,78 @@
 import type { ApiContext } from "./context";
 import { CACHE_KEY_DASHBOARD } from "./context";
+import { handler } from "./helpers";
 
 export function dashboardRoutes(ctx: ApiContext) {
   return {
     // GET /api/dashboard/debug - Debug endpoint to check user info
     "/api/dashboard/debug": {
-      GET: async () => {
-        try {
-          const { azureDevOpsService } = await ctx.getServices();
+      GET: handler(async () => {
+        const { azureDevOpsService } = await ctx.getServices();
 
-          // Get connection data to see what we're working with
-          const connectionData = await (azureDevOpsService as any).request(
-            `https://dev.azure.com/${(azureDevOpsService as any).organization}/_apis/connectionData?api-version=7.0-preview`
-          );
+        // Get connection data to see what we're working with
+        const connectionData = await (azureDevOpsService as any).request(
+          `https://dev.azure.com/${(azureDevOpsService as any).organization}/_apis/connectionData?api-version=7.0-preview`
+        );
 
-          return Response.json({
-            connectionData,
-            authenticatedUser: connectionData.authenticatedUser,
-            userId: connectionData.authenticatedUser?.id,
-          });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
-        }
-      },
+        return Response.json({
+          connectionData,
+          authenticatedUser: connectionData.authenticatedUser,
+          userId: connectionData.authenticatedUser?.id,
+        });
+      }),
     },
 
     // GET /api/dashboard - Get all dashboard data in one call (uses cache)
     "/api/dashboard": {
-      GET: async (req: Request) => {
-        try {
-          const url = new URL(req.url);
-          const forceRefresh = url.searchParams.get("refresh") === "true";
+      GET: handler(async (req: Request) => {
+        const url = new URL(req.url);
+        const forceRefresh = url.searchParams.get("refresh") === "true";
 
-          // Check cache first (unless force refresh)
-          if (!forceRefresh) {
-            const cached = ctx.cacheService.get(CACHE_KEY_DASHBOARD);
-            if (cached) {
-              // cached.data contains the actual dashboard data
-              return Response.json({ ...cached.data, fromCache: true });
-            }
+        // Check cache first (unless force refresh)
+        if (!forceRefresh) {
+          const cached = ctx.cacheService.get(CACHE_KEY_DASHBOARD);
+          if (cached) {
+            // cached.data contains the actual dashboard data
+            return Response.json({ ...cached.data, fromCache: true });
           }
-
-          // No cache or force refresh - fetch fresh data
-          const data = await ctx.refreshDashboard();
-          return Response.json(data);
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
         }
-      },
+
+        // No cache or force refresh - fetch fresh data
+        const data = await ctx.refreshDashboard();
+        return Response.json(data);
+      }),
     },
 
     // GET /api/dashboard/issues - Get just the assigned issues
     "/api/dashboard/issues": {
-      GET: async () => {
-        try {
-          const { jiraService, jiraConfig } = await ctx.getServices();
-          const issues = await jiraService.getMyIssues();
-          return Response.json({ issues, jiraHost: jiraConfig.host });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
-        }
-      },
+      GET: handler(async () => {
+        const { jiraService, jiraConfig } = await ctx.getServices();
+        const issues = await jiraService.getMyIssues();
+        return Response.json({ issues, jiraHost: jiraConfig.host });
+      }),
     },
 
     // GET /api/dashboard/my-prs - Get PRs created by current user
     "/api/dashboard/my-prs": {
-      GET: async () => {
-        try {
-          const { azureDevOpsService } = await ctx.getServices();
-          const prs = await azureDevOpsService.getMyPullRequests();
-          return Response.json({ prs });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
-        }
-      },
+      GET: handler(async () => {
+        const { azureDevOpsService } = await ctx.getServices();
+        const prs = await azureDevOpsService.getMyPullRequests();
+        return Response.json({ prs });
+      }),
     },
 
     // GET /api/dashboard/to-review - Get PRs where current user is a reviewer
     "/api/dashboard/to-review": {
-      GET: async () => {
-        try {
-          const { azureDevOpsService } = await ctx.getServices();
-          const prs = await azureDevOpsService.getPRsToReview();
-          return Response.json({ prs });
-        } catch (error) {
-          return Response.json({ error: String(error) }, { status: 500 });
-        }
-      },
+      GET: handler(async () => {
+        const { azureDevOpsService } = await ctx.getServices();
+        const prs = await azureDevOpsService.getPRsToReview();
+        return Response.json({ prs });
+      }),
     },
 
     // GET /api/dashboard/stream - SSE endpoint for live dashboard updates
     "/api/dashboard/stream": {
-      GET: async (req: Request) => {
+      GET: handler(async (req: Request) => {
         const REFRESH_INTERVAL = 60000; // 1 minute
 
         const stream = new ReadableStream({
@@ -170,7 +151,7 @@ export function dashboardRoutes(ctx: ApiContext) {
             Connection: "keep-alive",
           },
         });
-      },
+      }),
     },
   };
 }
