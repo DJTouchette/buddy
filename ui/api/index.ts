@@ -11,6 +11,8 @@ import { jobsRoutes } from "./jobs";
 import { dashboardRoutes } from "./dashboard";
 import { statsRoutes } from "./stats";
 import { aiRoutes } from "./ai";
+import { appsyncRoutes } from "./appsync";
+import { ctestRoutes } from "./ctest";
 
 export type { ApiContext, Services, ValidatedJiraConfig, ValidatedAzureConfig } from "./context";
 export { CACHE_KEY_TICKETS, CACHE_KEY_PRS, CACHE_KEY_DASHBOARD } from "./context";
@@ -32,5 +34,7 @@ export function createApiRoutes(ctx: ApiContext) {
     ...dashboardRoutes(ctx),
     ...statsRoutes(ctx),
     ...aiRoutes(ctx),
+    ...appsyncRoutes({ configService: ctx.configService, cacheService: ctx.cacheService }),
+    ...ctestRoutes({ jobService: ctx.jobService, cacheService: ctx.cacheService }),
   };
 }

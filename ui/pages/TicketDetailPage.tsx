@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { ArrowLeft, ExternalLink, User, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X, ChevronLeft, ChevronRight, UserPlus, UserMinus, Bot } from "lucide-react";
+import { ArrowLeft, ExternalLink, User, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X, ChevronLeft, ChevronRight, UserPlus, UserMinus, Bot, Play } from "lucide-react";
 import { JiraMarkdown } from "../components/JiraMarkdown";
 import { NotesEditor } from "../components/NotesEditor";
+import { AttachmentPreview } from "../components/AttachmentPreview";
 import type { TicketWithPR } from "../../services/linkingService";
 import type { JiraAttachment } from "../../services/jiraService";
 
@@ -52,21 +53,26 @@ function formatFileSize(bytes: number): string {
 
 function getFileIcon(mimeType: string) {
   if (mimeType.startsWith("image/")) return Image;
+  if (mimeType.startsWith("video/")) return Play;
   if (mimeType.includes("pdf") || mimeType.includes("document") || mimeType.includes("text")) return FileText;
   return File;
 }
 
-function AttachmentItem({ attachment }: { attachment: JiraAttachment }) {
+interface AttachmentItemProps {
+  attachment: JiraAttachment;
+  onPreview: (attachment: JiraAttachment) => void;
+}
+
+function AttachmentItem({ attachment, onPreview }: AttachmentItemProps) {
   const isImage = attachment.mimeType.startsWith("image/");
+  const isVideo = attachment.mimeType.startsWith("video/");
   const FileIcon = getFileIcon(attachment.mimeType);
   const thumbnailUrl = `/api/jira/thumbnail/${attachment.id}`;
-  // Use proxy endpoint for viewing (handles auth)
   const viewUrl = `/api/jira/attachment/${attachment.id}`;
 
   const handleDownload = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Create a temporary link to trigger download
     const link = document.createElement("a");
     link.href = viewUrl;
     link.download = attachment.filename;
@@ -75,18 +81,25 @@ function AttachmentItem({ attachment }: { attachment: JiraAttachment }) {
     document.body.removeChild(link);
   };
 
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    onPreview(attachment);
+  };
+
   return (
     <div className="attachment-item-wrapper">
-      <a
-        href={viewUrl}
-        target="_blank"
-        rel="noopener noreferrer"
+      <button
+        onClick={handleClick}
         className="attachment-item"
-        title={`View ${attachment.filename} (${formatFileSize(attachment.size)})`}
+        title={`Preview ${attachment.filename} (${formatFileSize(attachment.size)})`}
       >
         {isImage ? (
           <div className="attachment-thumbnail">
             <img src={thumbnailUrl} alt={attachment.filename} />
+          </div>
+        ) : isVideo ? (
+          <div className="attachment-thumbnail video-thumbnail">
+            <Play className="w-8 h-8" />
           </div>
         ) : (
           <div className="attachment-icon">
@@ -97,7 +110,7 @@ function AttachmentItem({ attachment }: { attachment: JiraAttachment }) {
           <span className="attachment-name">{attachment.filename}</span>
           <span className="attachment-meta">{formatFileSize(attachment.size)}</span>
         </div>
-      </a>
+      </button>
       <button
         className="attachment-download-btn"
         onClick={handleDownload}
@@ -242,6 +255,9 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
   const [showAiBranchPicker, setShowAiBranchPicker] = useState(false);
   const [showAiModePicker, setShowAiModePicker] = useState(false);
   const [pendingAiBranch, setPendingAiBranch] = useState<string | null>(null);
+
+  // Attachment preview state
+  const [previewAttachment, setPreviewAttachment] = useState<JiraAttachment | null>(null);
 
   const fetchTicket = useCallback(async () => {
     setLoading(true);
@@ -924,7 +940,7 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
             </h4>
             <div className="attachment-grid">
               {ticket.fields.attachment.map((att) => (
-                <AttachmentItem key={att.id} attachment={att} />
+                <AttachmentItem key={att.id} attachment={att} onPreview={setPreviewAttachment} />
               ))}
             </div>
           </div>
@@ -956,6 +972,14 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
         {/* Local Notes */}
         <NotesEditor type="ticket" id={ticket.key} />
       </div>
+
+      {/* Attachment Preview Modal */}
+      <AttachmentPreview
+        attachment={previewAttachment}
+        attachments={ticket.fields.attachment}
+        onClose={() => setPreviewAttachment(null)}
+        onNavigate={setPreviewAttachment}
+      />
     </div>
   );
 }

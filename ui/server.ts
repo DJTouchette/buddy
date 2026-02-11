@@ -272,7 +272,9 @@ export async function startUIServer(port: number) {
       "/prs/*": index,      // Detail pages like /prs/456
       "/git": index,
       "/infra": index,
+      "/appsync": index,
       "/jobs": index,
+      "/ctest": index,
       "/settings": index,
 
       // API routes from modules

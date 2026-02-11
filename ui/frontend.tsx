@@ -13,8 +13,10 @@ import { PRDetailPage } from "./pages/PRDetailPage";
 import { CreatePRPage } from "./pages/CreatePRPage";
 import { GitPage } from "./pages/GitPage";
 import { InfraPage } from "./pages/InfraPage";
+import { AppSyncPage } from "./pages/AppSyncPage";
 import { JobsPage } from "./pages/JobsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { CTestPage } from "./pages/CTestPage";
 
 interface ConfigStatus {
   configured: boolean;
@@ -99,8 +101,12 @@ function App() {
         return <GitPage />;
       case "/infra":
         return <InfraPage />;
+      case "/appsync":
+        return <AppSyncPage />;
       case "/jobs":
         return <JobsPage navigate={navigate} />;
+      case "/ctest":
+        return <CTestPage navigate={navigate} />;
       case "/settings":
         return <SettingsPage />;
       default:

@@ -109,9 +109,20 @@ export function jiraRoutes(ctx: ApiContext) {
           const contentType = response.headers.get("content-type") || "application/octet-stream";
           const data = await response.arrayBuffer();
 
+          // Get filename from Content-Disposition header if available
+          const disposition = response.headers.get("content-disposition");
+          let filename = "attachment";
+          if (disposition) {
+            const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+            if (match) {
+              filename = match[1].replace(/['"]/g, "");
+            }
+          }
+
           return new Response(data, {
             headers: {
               "Content-Type": contentType,
+              "Content-Disposition": `inline; filename="${filename}"`,
               "Cache-Control": "private, max-age=3600",
             },
           });

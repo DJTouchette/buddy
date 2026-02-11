@@ -15,6 +15,23 @@ export const DEFAULT_JIRA_WORKFLOW = [
   "Done",
 ];
 
+export interface CassadolEnvironmentConfig {
+  cognitoUserPoolId?: string;
+  cognitoClientId?: string;
+}
+
+export interface CassadolConfig {
+  schemaPath?: string;
+  region?: string;
+  environments?: {
+    dev?: CassadolEnvironmentConfig;
+    int?: CassadolEnvironmentConfig;
+    staging?: CassadolEnvironmentConfig;
+    prod?: CassadolEnvironmentConfig;
+    [key: string]: CassadolEnvironmentConfig | undefined;
+  };
+}
+
 export interface BuddyConfig {
   jira?: {
     host?: string;
@@ -39,6 +56,7 @@ export interface BuddyConfig {
     enabled?: boolean;
     claudePath?: string;  // Custom path to claude CLI if not in PATH
   };
+  cassadol?: CassadolConfig;
   settings?: {
     pollIntervalMinutes?: number;
     currentEnvironment?: string;
@@ -235,5 +253,34 @@ export class ConfigService {
   async getClaudePath(): Promise<string> {
     const aiConfig = await this.getAIConfig();
     return aiConfig?.claudePath ?? "claude";
+  }
+
+  // Cassadol/AppSync config operations
+  async getCassadolConfig(): Promise<CassadolConfig | undefined> {
+    const config = await this.load();
+    return config.cassadol;
+  }
+
+  async setCassadolConfig(cassadolConfig: Partial<CassadolConfig>): Promise<void> {
+    const config = await this.load();
+    config.cassadol = { ...config.cassadol, ...cassadolConfig };
+    await this.save(config);
+  }
+
+  async getCassadolSchemaPath(): Promise<string | null> {
+    const cassadol = await this.getCassadolConfig();
+    return cassadol?.schemaPath ?? null;
+  }
+
+  async getCassadolRegion(): Promise<string> {
+    const cassadol = await this.getCassadolConfig();
+    return cassadol?.region ?? "ca-central-1";
+  }
+
+  async getCassadolEnvironmentConfig(env: string): Promise<CassadolEnvironmentConfig | undefined> {
+    const cassadol = await this.getCassadolConfig();
+    // Normalize environment name to match config keys
+    const normalizedEnv = env.toLowerCase();
+    return cassadol?.environments?.[normalizedEnv];
   }
 }

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
-import { ExternalLink, User, UserPlus, UserMinus, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X, Expand, ChevronLeft, ChevronRight, Pencil, Save } from "lucide-react";
+import { ExternalLink, User, UserPlus, UserMinus, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X, Expand, ChevronLeft, ChevronRight, Pencil, Save, Play } from "lucide-react";
 import { Modal } from "./Modal";
 import { JiraMarkdown } from "./JiraMarkdown";
 import { NotesEditor } from "./NotesEditor";
+import { AttachmentPreview } from "./AttachmentPreview";
 import type { TicketWithPR } from "../../services/linkingService";
 import type { JiraAttachment } from "../../services/jiraService";
 
@@ -58,6 +59,7 @@ function formatFileSize(bytes: number): string {
 
 function getFileIcon(mimeType: string) {
   if (mimeType.startsWith("image/")) return Image;
+  if (mimeType.startsWith("video/")) return Play;
   if (mimeType.includes("pdf") || mimeType.includes("document") || mimeType.includes("text")) return FileText;
   return File;
 }
@@ -169,19 +171,22 @@ function WorkflowStatusBar({ currentStatus, workflowStatuses, availableTransitio
   );
 }
 
-function AttachmentItem({ attachment }: { attachment: JiraAttachment }) {
+interface AttachmentItemProps {
+  attachment: JiraAttachment;
+  onPreview: (attachment: JiraAttachment) => void;
+}
+
+function AttachmentItem({ attachment, onPreview }: AttachmentItemProps) {
   const isImage = attachment.mimeType.startsWith("image/");
+  const isVideo = attachment.mimeType.startsWith("video/");
   const FileIcon = getFileIcon(attachment.mimeType);
 
-  // Use proxy URL for thumbnails to handle JIRA auth
   const thumbnailUrl = `/api/jira/thumbnail/${attachment.id}`;
-  // Use proxy endpoint for viewing (handles auth)
   const viewUrl = `/api/jira/attachment/${attachment.id}`;
 
   const handleDownload = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Create a temporary link to trigger download
     const link = document.createElement("a");
     link.href = viewUrl;
     link.download = attachment.filename;
@@ -190,18 +195,25 @@ function AttachmentItem({ attachment }: { attachment: JiraAttachment }) {
     document.body.removeChild(link);
   };
 
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    onPreview(attachment);
+  };
+
   return (
     <div className="attachment-item-wrapper">
-      <a
-        href={viewUrl}
-        target="_blank"
-        rel="noopener noreferrer"
+      <button
+        onClick={handleClick}
         className="attachment-item"
-        title={`View ${attachment.filename} (${formatFileSize(attachment.size)})`}
+        title={`Preview ${attachment.filename} (${formatFileSize(attachment.size)})`}
       >
         {isImage ? (
           <div className="attachment-thumbnail">
             <img src={thumbnailUrl} alt={attachment.filename} />
+          </div>
+        ) : isVideo ? (
+          <div className="attachment-thumbnail video-thumbnail">
+            <Play className="w-8 h-8" />
           </div>
         ) : (
           <div className="attachment-icon">
@@ -212,7 +224,7 @@ function AttachmentItem({ attachment }: { attachment: JiraAttachment }) {
           <span className="attachment-name">{attachment.filename}</span>
           <span className="attachment-meta">{formatFileSize(attachment.size)}</span>
         </div>
-      </a>
+      </button>
       <button
         className="attachment-download-btn"
         onClick={handleDownload}
@@ -236,6 +248,9 @@ export function TicketDetailModal({ ticket, jiraHost, onClose, onTicketClick, on
   const [transitions, setTransitions] = useState<JiraTransition[]>([]);
   const [workflowStatuses, setWorkflowStatuses] = useState<string[]>([]);
   const [isTransitioning, setIsTransitioning] = useState(false);
+
+  // Attachment preview state
+  const [previewAttachment, setPreviewAttachment] = useState<JiraAttachment | null>(null);
   const [transitionError, setTransitionError] = useState<string | null>(null);
 
   // Description editing state
@@ -858,7 +873,7 @@ export function TicketDetailModal({ ticket, jiraHost, onClose, onTicketClick, on
             </h4>
             <div className="attachment-grid">
               {ticket.fields.attachment.map((att) => (
-                <AttachmentItem key={att.id} attachment={att} />
+                <AttachmentItem key={att.id} attachment={att} onPreview={setPreviewAttachment} />
               ))}
             </div>
           </div>
@@ -947,6 +962,14 @@ export function TicketDetailModal({ ticket, jiraHost, onClose, onTicketClick, on
         {/* Local Notes */}
         <NotesEditor type="ticket" id={ticket.key} />
       </div>
+
+      {/* Attachment Preview Modal */}
+      <AttachmentPreview
+        attachment={previewAttachment}
+        attachments={ticket.fields.attachment}
+        onClose={() => setPreviewAttachment(null)}
+        onNavigate={setPreviewAttachment}
+      />
     </Modal>
   );
 }

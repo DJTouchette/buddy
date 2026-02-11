@@ -10,6 +10,7 @@ import {
   FileText,
   Image,
   File,
+  Play,
 } from "lucide-react";
 import type { JiraAttachment } from "../../services/jiraService";
 
@@ -37,6 +38,7 @@ export function formatFileSize(bytes: number): string {
 
 export function getFileIcon(mimeType: string) {
   if (mimeType.startsWith("image/")) return Image;
+  if (mimeType.startsWith("video/")) return Play;
   if (mimeType.includes("pdf") || mimeType.includes("document") || mimeType.includes("text"))
     return FileText;
   return File;
@@ -167,8 +169,14 @@ export function DetailRow({
   );
 }
 
-export function AttachmentItem({ attachment }: { attachment: JiraAttachment }) {
+interface AttachmentItemProps {
+  attachment: JiraAttachment;
+  onPreview?: (attachment: JiraAttachment) => void;
+}
+
+export function AttachmentItem({ attachment, onPreview }: AttachmentItemProps) {
   const isImage = attachment.mimeType.startsWith("image/");
+  const isVideo = attachment.mimeType.startsWith("video/");
   const FileIcon = getFileIcon(attachment.mimeType);
   const thumbnailUrl = `/api/jira/thumbnail/${attachment.id}`;
   const viewUrl = `/api/jira/attachment/${attachment.id}`;
@@ -184,18 +192,30 @@ export function AttachmentItem({ attachment }: { attachment: JiraAttachment }) {
     document.body.removeChild(link);
   };
 
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (onPreview) {
+      onPreview(attachment);
+    } else {
+      // Fallback to opening in new tab if no preview handler
+      window.open(viewUrl, "_blank");
+    }
+  };
+
   return (
     <div className="attachment-item-wrapper">
-      <a
-        href={viewUrl}
-        target="_blank"
-        rel="noopener noreferrer"
+      <button
+        onClick={handleClick}
         className="attachment-item"
-        title={`View ${attachment.filename} (${formatFileSize(attachment.size)})`}
+        title={`Preview ${attachment.filename} (${formatFileSize(attachment.size)})`}
       >
         {isImage ? (
           <div className="attachment-thumbnail">
             <img src={thumbnailUrl} alt={attachment.filename} />
+          </div>
+        ) : isVideo ? (
+          <div className="attachment-thumbnail video-thumbnail">
+            <Play className="w-8 h-8" />
           </div>
         ) : (
           <div className="attachment-icon">
@@ -206,7 +226,7 @@ export function AttachmentItem({ attachment }: { attachment: JiraAttachment }) {
           <span className="attachment-name">{attachment.filename}</span>
           <span className="attachment-meta">{formatFileSize(attachment.size)}</span>
         </div>
-      </a>
+      </button>
       <button
         className="attachment-download-btn"
         onClick={handleDownload}

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { ArrowLeft, ExternalLink, GitBranch, GitMerge, User, UserPlus, UserMinus, Users, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X, Maximize2, Minimize2, Pencil, Save, AlertCircle, MessageSquare, Code, ThumbsUp, ThumbsDown, MinusCircle } from "lucide-react";
+import { ArrowLeft, ExternalLink, GitBranch, GitMerge, User, UserPlus, UserMinus, Users, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X, Maximize2, Minimize2, Pencil, Save, AlertCircle, MessageSquare, Code, ThumbsUp, ThumbsDown, MinusCircle, Eye } from "lucide-react";
 import { NotesEditor } from "../components/NotesEditor";
 import { Markdown } from "../components/Markdown";
 import type { PRWithTicket } from "../../services/linkingService";
@@ -187,6 +187,7 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
   // Reviewer state
   const [isAddingReviewer, setIsAddingReviewer] = useState(false);
   const [isRemovingReviewer, setIsRemovingReviewer] = useState(false);
+  const [isReviewing, setIsReviewing] = useState(false);
 
   const fetchPR = useCallback(async () => {
     setLoading(true);
@@ -412,6 +413,34 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
     }
   };
 
+  // Review action: add as reviewer + checkout
+  const handleReview = async () => {
+    if (!pr) return;
+
+    setIsReviewing(true);
+    try {
+      // Add self as reviewer
+      const response = await fetch(`/api/prs/${pr.pullRequestId}/reviewers/self`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setPr({
+          ...pr,
+          reviewers: data.pr.reviewers,
+        });
+      }
+
+      // Checkout the branch
+      await handleCheckout();
+    } finally {
+      setIsReviewing(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="text-center py-8 text-muted">
@@ -462,19 +491,34 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
           <h3 className="detail-summary">{pr.title}</h3>
           <div className="detail-header-actions">
             {!isCheckedOut && (
-              <button
-                className="btn-secondary"
-                onClick={handleCheckout}
-                disabled={checkoutLoading}
-                title="Checkout this PR branch"
-              >
-                {checkoutLoading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Download className="w-4 h-4" />
-                )}
-                Checkout
-              </button>
+              <>
+                <button
+                  className="btn-secondary btn-review"
+                  onClick={handleReview}
+                  disabled={isReviewing || checkoutLoading}
+                  title="Add yourself as reviewer and checkout branch"
+                >
+                  {isReviewing ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                  Review
+                </button>
+                <button
+                  className="btn-secondary"
+                  onClick={handleCheckout}
+                  disabled={checkoutLoading || isReviewing}
+                  title="Checkout this PR branch"
+                >
+                  {checkoutLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                  Checkout
+                </button>
+              </>
             )}
             <a href={pr.webUrl} target="_blank" rel="noopener noreferrer" className="btn-link">
               Open in Azure DevOps <ExternalLink className="w-4 h-4" />

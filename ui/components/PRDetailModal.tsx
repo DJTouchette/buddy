@@ -1,5 +1,5 @@
-import React, { useEffect } from "react";
-import { ExternalLink, GitBranch, GitMerge, User, UserPlus, UserMinus, Users, FileText, CheckCircle, Ticket, Download, Loader2, Check, X, Expand, Maximize2, Minimize2, Pencil, Save, AlertCircle } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { ExternalLink, GitBranch, GitMerge, User, UserPlus, UserMinus, Users, FileText, CheckCircle, Ticket, Download, Loader2, Check, X, Expand, Maximize2, Minimize2, Pencil, Save, AlertCircle, Eye } from "lucide-react";
 import { Modal } from "./Modal";
 import { NotesEditor } from "./NotesEditor";
 import { Markdown } from "./Markdown";
@@ -36,6 +36,9 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
   const reviewers = usePRReviewers(pr?.pullRequestId || 0);
   const statusData = usePRStatuses(pr?.pullRequestId);
 
+  // Review action state (combines add reviewer + checkout)
+  const [isReviewing, setIsReviewing] = useState(false);
+
   // Reset state and fetch data when PR changes
   useEffect(() => {
     if (pr) {
@@ -70,6 +73,23 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
     }
   };
 
+  // Review action: add as reviewer + checkout
+  const handleReview = async () => {
+    setIsReviewing(true);
+    try {
+      // Add self as reviewer
+      const newReviewers = await reviewers.addSelfAsReviewer();
+      if (newReviewers && onPRUpdate) {
+        onPRUpdate({ ...pr, reviewers: newReviewers });
+      }
+
+      // Checkout the branch
+      await checkout.handleCheckout();
+    } finally {
+      setIsReviewing(false);
+    }
+  };
+
   const titleExtra = checkout.isCheckedOut ? (
     <div className="checked-out-badge">
       <Check className="w-4 h-4" />
@@ -85,19 +105,34 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
           <h3 className="detail-summary">{pr.title}</h3>
           <div className="detail-header-actions">
             {!checkout.isCheckedOut && (
-              <button
-                className="btn-secondary"
-                onClick={checkout.handleCheckout}
-                disabled={checkout.checkoutLoading}
-                title="Checkout this PR branch"
-              >
-                {checkout.checkoutLoading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Download className="w-4 h-4" />
-                )}
-                Checkout
-              </button>
+              <>
+                <button
+                  className="btn-secondary btn-review"
+                  onClick={handleReview}
+                  disabled={isReviewing || checkout.checkoutLoading}
+                  title="Add yourself as reviewer and checkout branch"
+                >
+                  {isReviewing ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                  Review
+                </button>
+                <button
+                  className="btn-secondary"
+                  onClick={checkout.handleCheckout}
+                  disabled={checkout.checkoutLoading || isReviewing}
+                  title="Checkout this PR branch"
+                >
+                  {checkout.checkoutLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                  Checkout
+                </button>
+              </>
             )}
             {onOpenFullPage && (
               <button
