@@ -13,6 +13,7 @@ import { statsRoutes } from "./stats";
 import { aiRoutes } from "./ai";
 import { appsyncRoutes } from "./appsync";
 import { ctestRoutes } from "./ctest";
+import { docsRoutes } from "./docs";
 
 export type { ApiContext, Services, ValidatedJiraConfig, ValidatedAzureConfig } from "./context";
 export { CACHE_KEY_TICKETS, CACHE_KEY_PRS, CACHE_KEY_DASHBOARD } from "./context";
@@ -36,5 +37,6 @@ export function createApiRoutes(ctx: ApiContext) {
     ...aiRoutes(ctx),
     ...appsyncRoutes(ctx),
     ...ctestRoutes(ctx),
+    ...docsRoutes(ctx),
   };
 }

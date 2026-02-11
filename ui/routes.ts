@@ -12,6 +12,7 @@ import { AppSyncPage } from "./pages/AppSyncPage";
 import { JobsPage } from "./pages/JobsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { CTestPage } from "./pages/CTestPage";
+import { DocsPage } from "./pages/DocsPage";
 
 interface Route {
   path: string;
@@ -34,6 +35,7 @@ const routes: Route[] = [
   { path: "/appsync", component: AppSyncPage },
   { path: "/jobs", component: JobsPage },
   { path: "/ctest", component: CTestPage },
+  { path: "/ai-docs", component: DocsPage },
   { path: "/settings", component: SettingsPage },
 ];
 

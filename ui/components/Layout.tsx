@@ -49,6 +49,7 @@ export function Layout({ children, currentPath, navigate }: LayoutProps) {
     { path: "/appsync", label: "AppSync" },
     { path: "/jobs", label: "Jobs" },
     { path: "/ctest", label: "C# Tests" },
+    { path: "/ai-docs", label: "AI" },
   ];
 
   const isActive = (path: string) => {
