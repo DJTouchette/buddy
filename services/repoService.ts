@@ -22,19 +22,45 @@ export class RepoService {
   }
 
   /**
+   * Detect if running inside a devcontainer or Docker container
+   */
+  private isContainer(): boolean {
+    try {
+      // Check for .dockerenv file (Docker)
+      const dockerenv = Bun.file("/.dockerenv");
+      if (dockerenv.size > 0 || Bun.env.REMOTE_CONTAINERS === "true" || Bun.env.CODESPACES === "true") {
+        return true;
+      }
+    } catch {}
+
+    // Check for container env vars
+    if (Bun.env.REMOTE_CONTAINERS || Bun.env.CODESPACES || Bun.env.CONTAINER_ID) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Get directories to scan based on platform
    */
   private getScanDirectories(): { path: string; isWsl: boolean }[] {
     const dirs: { path: string; isWsl: boolean }[] = [];
-
-    // WSL home directory
     const home = homedir();
-    dirs.push({ path: home, isWsl: true });
 
-    // Windows user directories (common mount points in WSL)
-    const windowsMounts = ["/mnt/c/Users", "/mnt/d/Users"];
-    for (const mount of windowsMounts) {
-      dirs.push({ path: mount, isWsl: false });
+    if (this.isContainer()) {
+      // Container/devcontainer: scan /workspaces and home
+      dirs.push({ path: home, isWsl: false });
+      if (home !== "/workspaces") {
+        dirs.push({ path: "/workspaces", isWsl: false });
+      }
+    } else {
+      // WSL: scan home + Windows mounts
+      dirs.push({ path: home, isWsl: true });
+      const windowsMounts = ["/mnt/c/Users", "/mnt/d/Users"];
+      for (const mount of windowsMounts) {
+        dirs.push({ path: mount, isWsl: false });
+      }
     }
 
     return dirs;
