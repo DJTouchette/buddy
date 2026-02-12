@@ -1,9 +1,17 @@
 import type { ApiContext } from "./context";
 import { CACHE_KEY_TICKETS, CACHE_KEY_PRS } from "./context";
 import { handler } from "./helpers";
+import pkg from "../../package.json";
 
 export function settingsRoutes(ctx: ApiContext) {
   return {
+    // GET /api/version - App version
+    "/api/version": {
+      GET: handler(async () => {
+        return Response.json({ version: pkg.version });
+      }),
+    },
+
     // GET /api/status - Health check / config status
     "/api/status": {
       GET: handler(async () => {

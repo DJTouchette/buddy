@@ -30,6 +30,7 @@ export function SettingsPage() {
   const [boardId, setBoardId] = useState<string>("");
   const [protectedEnvs, setProtectedEnvs] = useState<string[]>([]);
   const [newProtectedEnv, setNewProtectedEnv] = useState("");
+  const [version, setVersion] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingBoard, setSavingBoard] = useState(false);
@@ -39,19 +40,22 @@ export function SettingsPage() {
 
   const fetchSettings = async () => {
     try {
-      const [settingsRes, cacheRes, jiraRes] = await Promise.all([
+      const [settingsRes, cacheRes, jiraRes, versionRes] = await Promise.all([
         fetch("/api/settings"),
         fetch("/api/cache/info"),
         fetch("/api/jira/config"),
+        fetch("/api/version"),
       ]);
 
       const settingsData = await settingsRes.json();
       const cacheData = await cacheRes.json();
       const jiraData = await jiraRes.json();
+      const versionData = await versionRes.json();
 
       setSettings(settingsData);
       setCacheInfo(cacheData);
       setJiraConfig(jiraData);
+      setVersion(versionData.version);
       setPollInterval(settingsData.settings.pollIntervalMinutes);
       setProtectedEnvs(settingsData.settings.protectedEnvironments || []);
       setBoardId(jiraData.boardId ? String(jiraData.boardId) : "");
@@ -431,6 +435,11 @@ export function SettingsPage() {
       <div className="settings-section">
         <h2 className="settings-section-title">About</h2>
         <div className="settings-card">
+          {version && (
+            <p className="text-sm" style={{ marginBottom: "0.5rem" }}>
+              <strong>Buddy</strong> v{version}
+            </p>
+          )}
           <p className="text-sm text-muted">
             Buddy UI caches JIRA tickets and Azure DevOps pull requests to provide faster loading times.
             The cache is stored locally in <code>~/.buddy/cache.db</code>.

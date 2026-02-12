@@ -1,6 +1,6 @@
 {
   "name": "buddy",
-  "version": "1.0.96",
+  "version": "1.0.97",
   "module": "index.ts",
   "type": "module",
   "private": true,
