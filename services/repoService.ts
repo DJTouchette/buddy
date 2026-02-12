@@ -24,11 +24,10 @@ export class RepoService {
   /**
    * Detect if running inside a devcontainer or Docker container
    */
-  private isContainer(): boolean {
+  private async isContainer(): Promise<boolean> {
     try {
-      // Check for .dockerenv file (Docker)
-      const dockerenv = Bun.file("/.dockerenv");
-      if (dockerenv.size > 0 || Bun.env.REMOTE_CONTAINERS === "true" || Bun.env.CODESPACES === "true") {
+      // Check for .dockerenv file (Docker) - file is typically empty, so check existence not size
+      if (await Bun.file("/.dockerenv").exists()) {
         return true;
       }
     } catch {}
@@ -45,11 +44,11 @@ export class RepoService {
    * Get directories to scan based on platform
    * includeAllRepos: when true, include any git repo found (not just search term matches)
    */
-  private getScanDirectories(): { path: string; isWsl: boolean; includeAllRepos: boolean }[] {
+  private async getScanDirectories(): Promise<{ path: string; isWsl: boolean; includeAllRepos: boolean }[]> {
     const dirs: { path: string; isWsl: boolean; includeAllRepos: boolean }[] = [];
     const home = homedir();
 
-    if (this.isContainer()) {
+    if (await this.isContainer()) {
       // Container/devcontainer: scan /workspaces and home
       // Include all git repos in container workspace paths (repos may not match search term)
       dirs.push({ path: home, isWsl: false, includeAllRepos: true });
@@ -137,7 +136,7 @@ export class RepoService {
    */
   async scanForRepos(onProgress?: (message: string) => void): Promise<Omit<Repo, "id" | "lastScanned">[]> {
     const allRepos: Omit<Repo, "id" | "lastScanned">[] = [];
-    const scanDirs = this.getScanDirectories();
+    const scanDirs = await this.getScanDirectories();
 
     for (const { path, isWsl, includeAllRepos } of scanDirs) {
       onProgress?.(`Scanning ${path}...`);
