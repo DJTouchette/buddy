@@ -43,23 +43,25 @@ export class RepoService {
 
   /**
    * Get directories to scan based on platform
+   * includeAllRepos: when true, include any git repo found (not just search term matches)
    */
-  private getScanDirectories(): { path: string; isWsl: boolean }[] {
-    const dirs: { path: string; isWsl: boolean }[] = [];
+  private getScanDirectories(): { path: string; isWsl: boolean; includeAllRepos: boolean }[] {
+    const dirs: { path: string; isWsl: boolean; includeAllRepos: boolean }[] = [];
     const home = homedir();
 
     if (this.isContainer()) {
       // Container/devcontainer: scan /workspaces and home
-      dirs.push({ path: home, isWsl: false });
+      // Include all git repos in container workspace paths (repos may not match search term)
+      dirs.push({ path: home, isWsl: false, includeAllRepos: true });
       if (home !== "/workspaces") {
-        dirs.push({ path: "/workspaces", isWsl: false });
+        dirs.push({ path: "/workspaces", isWsl: false, includeAllRepos: true });
       }
     } else {
       // WSL: scan home + Windows mounts
-      dirs.push({ path: home, isWsl: true });
+      dirs.push({ path: home, isWsl: true, includeAllRepos: false });
       const windowsMounts = ["/mnt/c/Users", "/mnt/d/Users"];
       for (const mount of windowsMounts) {
-        dirs.push({ path: mount, isWsl: false });
+        dirs.push({ path: mount, isWsl: false, includeAllRepos: false });
       }
     }
 
@@ -86,7 +88,8 @@ export class RepoService {
     basePath: string,
     isWsl: boolean,
     maxDepth: number = 4,
-    currentDepth: number = 0
+    currentDepth: number = 0,
+    includeAllRepos: boolean = false
   ): Promise<Omit<Repo, "id" | "lastScanned">[]> {
     const repos: Omit<Repo, "id" | "lastScanned">[] = [];
 
@@ -106,8 +109,8 @@ export class RepoService {
         const lowerName = entry.name.toLowerCase();
         const searchLower = this.searchTerm.toLowerCase();
 
-        // Check if this directory matches our search term
-        if (lowerName.includes(searchLower)) {
+        // Check if this directory matches our search term, or include all repos in container workspace dirs
+        if (lowerName.includes(searchLower) || includeAllRepos) {
           // Check if it's a git repo
           if (await this.isGitRepo(fullPath)) {
             repos.push({
@@ -119,7 +122,7 @@ export class RepoService {
         }
 
         // Continue scanning subdirectories
-        const subRepos = await this.scanDirectory(fullPath, isWsl, maxDepth, currentDepth + 1);
+        const subRepos = await this.scanDirectory(fullPath, isWsl, maxDepth, currentDepth + 1, includeAllRepos);
         repos.push(...subRepos);
       }
     } catch (err) {
@@ -136,10 +139,10 @@ export class RepoService {
     const allRepos: Omit<Repo, "id" | "lastScanned">[] = [];
     const scanDirs = this.getScanDirectories();
 
-    for (const { path, isWsl } of scanDirs) {
+    for (const { path, isWsl, includeAllRepos } of scanDirs) {
       onProgress?.(`Scanning ${path}...`);
       try {
-        const repos = await this.scanDirectory(path, isWsl);
+        const repos = await this.scanDirectory(path, isWsl, 4, 0, includeAllRepos);
         allRepos.push(...repos);
       } catch (err) {
         // Skip inaccessible directories
