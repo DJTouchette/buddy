@@ -9,6 +9,7 @@ import { jiraCommand } from "./commands/jiraCommand";
 import { prCommand } from "./commands/prCommand";
 import { mcpCommand } from "./commands/mcpCommand";
 import { configCommand } from "./commands/configCommand";
+import { repoCommand } from "./commands/repoCommand";
 import { uiCommand } from "./commands/uiCommand";
 
 yargs(hideBin(process.argv))
@@ -19,6 +20,7 @@ yargs(hideBin(process.argv))
   .command(prCommand)
   .command(mcpCommand)
   .command(configCommand)
+  .command(repoCommand)
   .command(uiCommand)
   .demandCommand()
   .strict()
