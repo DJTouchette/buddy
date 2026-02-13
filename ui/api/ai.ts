@@ -320,22 +320,8 @@ Important:
             }
 
             emit({ type: "status", message: "Starting Claude Code SDK..." });
-            console.log("[AI Test] Importing SDK...");
 
-            let claudeQuery: any;
-            try {
-              const sdk = await import("@anthropic-ai/claude-agent-sdk");
-              claudeQuery = sdk.query;
-              console.log("[AI Test] SDK imported successfully");
-            } catch (importErr: any) {
-              console.error("[AI Test] SDK import failed:", importErr);
-              emit({ type: "error", message: `Failed to import SDK: ${importErr?.message || importErr}` });
-              ctx.jobService.unregisterProcess(job.id);
-              ctx.jobService.updateJobStatus(job.id, "failed", String(importErr));
-              return;
-            }
-
-            console.log("[AI Test] Calling query() for", ticketKey, "in", repoPath);
+            const { query: claudeQuery } = await import("@anthropic-ai/claude-agent-sdk");
 
             // Strip CLAUDECODE env var to avoid "nested session" rejection
             const cleanEnv = { ...process.env };
@@ -364,19 +350,6 @@ Important:
             let currentText = "";
 
             for await (const message of q) {
-              const msgJson = JSON.stringify(message);
-              console.log("[AI Test] msg:", message.type, (message as any).subtype || "", msgJson.slice(0, 300));
-
-              // Emit ALL messages as status so we can see everything in the UI
-              if (message.type !== "system" && message.type !== "result") {
-                const preview = message.type === "user"
-                  ? `[user] ${msgJson.slice(0, 500)}`
-                  : message.type === "assistant"
-                  ? `[assistant] ${msgJson.slice(0, 500)}`
-                  : `[${message.type}] ${msgJson.slice(0, 300)}`;
-                emit({ type: "status", message: preview });
-              }
-
               if (abortController.signal.aborted) break;
 
               switch (message.type) {

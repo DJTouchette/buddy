@@ -50,7 +50,6 @@ export function Layout({ children, currentPath, navigate }: LayoutProps) {
     { path: "/jobs", label: "Jobs" },
     { path: "/ctest", label: "C# Tests" },
     { path: "/ai-docs", label: "AI" },
-    { path: "/ai-test", label: "AI Test" },
   ];
 
   const isActive = (path: string) => {

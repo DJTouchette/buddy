@@ -292,7 +292,6 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
         <div className="ai-session-stats">
           {resultEvent && (
             <>
-              <span>Cost: ${resultEvent.costUsd?.toFixed(4)}</span>
               <span>Duration: {Math.round((resultEvent.durationMs || 0) / 1000)}s</span>
               <span>Turns: {resultEvent.numTurns}</span>
             </>
@@ -341,7 +340,7 @@ function AIEventLine({ event }: { event: AIStreamEvent }) {
     case "result":
       return (
         <div className="ai-event ai-event-result">
-          Session complete — Cost: ${event.costUsd?.toFixed(4)} | Duration: {Math.round((event.durationMs || 0) / 1000)}s | Turns: {event.numTurns}
+          Session complete — Duration: {Math.round((event.durationMs || 0) / 1000)}s | Turns: {event.numTurns}
         </div>
       );
 
