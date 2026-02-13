@@ -77,8 +77,8 @@ function App() {
     );
   }
 
-  // Show wizard if not configured
-  if (showWizard && configStatus) {
+  // Show wizard if not configured (bypass for pages that don't need JIRA/Azure)
+  if (showWizard && configStatus && currentPath !== "/ai-test" && currentPath !== "/git") {
     return (
       <SetupWizard
         initialStatus={configStatus}

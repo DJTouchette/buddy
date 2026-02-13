@@ -8125,3 +8125,220 @@ a:hover {
 .docs-editor:focus {
   border-color: var(--link);
 }
+
+/* ============================================================================
+   AI Session Panel
+   ============================================================================ */
+
+.ai-session-panel {
+  margin-top: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  max-height: 600px;
+  overflow: hidden;
+}
+
+.ai-session-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.625rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--card-hover);
+}
+
+.ai-session-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.ai-session-id {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 0.75rem;
+  overflow-x: auto;
+}
+
+.ai-session-id-label {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ai-session-id-value {
+  font-family: monospace;
+  font-size: 0.7rem;
+  color: var(--link);
+  background: var(--card);
+  padding: 0.125rem 0.375rem;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+
+.ai-session-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.ai-session-tab {
+  padding: 0.5rem 1rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  transition: all 0.15s;
+}
+
+.ai-session-tab:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.ai-session-tab.active {
+  color: var(--link);
+  border-bottom-color: var(--link);
+}
+
+.ai-session-tab:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ai-tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--link);
+}
+
+.ai-session-output {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.75rem;
+  font-family: monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  min-height: 200px;
+  max-height: 400px;
+  position: relative;
+}
+
+.ai-session-file-view {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.ai-session-file-view .markdown-content {
+  padding: 0;
+  background: none;
+}
+
+.ai-session-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 0.75rem;
+}
+
+.ai-session-stats {
+  display: flex;
+  gap: 1rem;
+  color: var(--muted);
+}
+
+/* AI Event styling */
+.ai-event {
+  padding: 0.25rem 0;
+  word-break: break-word;
+}
+
+.ai-event-status {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.ai-event-assistant {
+  color: var(--text);
+}
+
+.ai-event-assistant .markdown-content {
+  padding: 0;
+  background: none;
+  font-size: 0.8rem;
+}
+
+.ai-event-tool {
+  color: var(--link);
+  padding: 0.375rem 0;
+}
+
+.ai-event-tool-name {
+  font-weight: 600;
+  display: inline-block;
+  padding: 0.0625rem 0.375rem;
+  background: color-mix(in srgb, var(--link) 15%, transparent);
+  border-radius: 3px;
+  font-size: 0.75rem;
+}
+
+.ai-event-tool-input {
+  margin-top: 0.25rem;
+  padding: 0.375rem 0.5rem;
+  background: var(--bg);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow-y: auto;
+  color: var(--muted);
+}
+
+.ai-event-result {
+  color: var(--success, #22c55e);
+  padding: 0.5rem 0;
+  font-weight: 500;
+  border-top: 1px solid var(--border);
+  margin-top: 0.25rem;
+}
+
+.ai-event-error {
+  color: var(--danger, #ef4444);
+}
+
+.ai-event-file {
+  color: var(--success, #22c55e);
+}
+
+/* btn-ai accent */
+.btn-ai {
+  border-color: color-mix(in srgb, var(--link) 40%, var(--border));
+}
+
+.btn-ai:hover:not(:disabled) {
+  border-color: var(--link);
+  background: color-mix(in srgb, var(--link) 10%, var(--card));
+}

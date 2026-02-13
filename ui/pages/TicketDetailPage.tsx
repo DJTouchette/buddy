@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { ArrowLeft, ExternalLink, User, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X, ChevronLeft, ChevronRight, UserPlus, UserMinus, Bot, Play } from "lucide-react";
+import { ArrowLeft, ExternalLink, User, Calendar, Tag, AlertCircle, GitBranch, Layers, Maximize2, Minimize2, Paperclip, FileText, Image, File, Download, Loader2, Check, X, ChevronLeft, ChevronRight, UserPlus, UserMinus, Play, Sparkles } from "lucide-react";
 import { JiraMarkdown } from "../components/JiraMarkdown";
 import { NotesEditor } from "../components/NotesEditor";
 import { AttachmentPreview } from "../components/AttachmentPreview";
+import { AISessionPanel } from "../components/AISessionPanel";
 import type { TicketWithPR } from "../../services/linkingService";
 import type { JiraAttachment } from "../../services/jiraService";
 
@@ -249,12 +250,10 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
   // Assignment state
   const [isAssigning, setIsAssigning] = useState(false);
 
-  // AI Fix state
+  // AI state
   const [aiEnabled, setAiEnabled] = useState(false);
-  const [startingAiFix, setStartingAiFix] = useState(false);
-  const [showAiBranchPicker, setShowAiBranchPicker] = useState(false);
-  const [showAiModePicker, setShowAiModePicker] = useState(false);
-  const [pendingAiBranch, setPendingAiBranch] = useState<string | null>(null);
+  const [startingAi, setStartingAi] = useState(false);
+  const [aiSessionJobId, setAiSessionJobId] = useState<string | null>(null);
 
   // Attachment preview state
   const [previewAttachment, setPreviewAttachment] = useState<JiraAttachment | null>(null);
@@ -460,54 +459,29 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
     window.history.back();
   };
 
-  const handleAiFixBranchSelect = (baseBranch: string) => {
-    setShowAiBranchPicker(false);
-    setPendingAiBranch(baseBranch);
-    setShowAiModePicker(true);
-  };
+  const handleStartWithAI = async () => {
+    if (!ticket) return;
 
-  const handleAiFix = async (mode: "file-only" | "interactive") => {
-    if (!ticket || !pendingAiBranch) return;
-
-    setShowAiModePicker(false);
-    setStartingAiFix(true);
+    setStartingAi(true);
     try {
-      // Get selected repo path
-      const repoRes = await fetch("/api/repos/selected");
-      const repoData = await repoRes.json();
-
-      if (!repoData.selectedRepo?.path) {
-        alert("No repository selected. Go to Git page to select a repository.");
-        return;
-      }
-
-      const response = await fetch("/api/ai/fix-ticket", {
+      const response = await fetch("/api/ai/start-ticket", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ticketKey: ticket.key,
-          ticketTitle: ticket.fields.summary,
-          repoPath: repoData.selectedRepo.path,
-          baseBranch: pendingAiBranch,
-          existingBranch, // Pass existing branch if there is one
-          mode,
-        }),
+        body: JSON.stringify({ ticketKey: ticket.key }),
       });
 
       const data = await response.json();
 
       if (response.ok && data.jobId) {
-        // Navigate to jobs page to see the progress
-        navigate("/jobs");
+        setAiSessionJobId(data.jobId);
       } else {
-        alert(data.error || "Failed to start AI fix");
+        alert(data.error || "Failed to start AI session");
       }
     } catch (err) {
-      console.error("Failed to start AI fix:", err);
-      alert("Failed to start AI fix");
+      console.error("Failed to start AI session:", err);
+      alert("Failed to start AI session");
     } finally {
-      setStartingAiFix(false);
-      setPendingAiBranch(null);
+      setStartingAi(false);
     }
   };
 
@@ -694,84 +668,20 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
                 )}
               </div>
             )}
-            {aiEnabled && (
-              <div className="ai-fix-button-wrapper">
-                {existingBranch ? (
-                  // Existing branch - go directly to mode picker
-                  <>
-                    <button
-                      className="btn-secondary btn-ai"
-                      onClick={() => {
-                        setPendingAiBranch(existingBranch);
-                        setShowAiModePicker(!showAiModePicker);
-                      }}
-                      disabled={startingAiFix}
-                      title={`Let Claude Code fix this ticket on ${existingBranch}`}
-                    >
-                      {startingAiFix ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Bot className="w-4 h-4" />
-                      )}
-                      AI Fix
-                    </button>
-                    {showAiModePicker && (
-                      <div className="branch-picker ai-mode-picker">
-                        <div className="branch-picker-title">Mode:</div>
-                        <button onClick={() => handleAiFix("file-only")} className="branch-picker-option">
-                          📝 File Only
-                          <span className="branch-picker-hint">Creates CLAUDE/{ticket.key}.md</span>
-                        </button>
-                        <button onClick={() => handleAiFix("interactive")} className="branch-picker-option">
-                          💬 Interactive
-                          <span className="branch-picker-hint">Starts Claude, gives resume command</span>
-                        </button>
-                      </div>
-                    )}
-                  </>
+            {aiEnabled && !aiSessionJobId && (
+              <button
+                className="btn-secondary btn-ai"
+                onClick={handleStartWithAI}
+                disabled={startingAi}
+                title="Start an AI session to work on this ticket"
+              >
+                {startingAi ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
-                  // No existing branch - show branch picker first
-                  <>
-                    <button
-                      className="btn-secondary btn-ai"
-                      onClick={() => setShowAiBranchPicker(!showAiBranchPicker)}
-                      disabled={startingAiFix}
-                      title="Let Claude Code attempt to fix this ticket"
-                    >
-                      {startingAiFix ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Bot className="w-4 h-4" />
-                      )}
-                      AI Fix
-                    </button>
-                    {showAiBranchPicker && (
-                      <div className="branch-picker">
-                        <div className="branch-picker-title">Branch from:</div>
-                        <button onClick={() => handleAiFixBranchSelect("master")} className="branch-picker-option">
-                          master
-                        </button>
-                        <button onClick={() => handleAiFixBranchSelect("nextrelease")} className="branch-picker-option">
-                          nextrelease
-                        </button>
-                      </div>
-                    )}
-                    {showAiModePicker && (
-                      <div className="branch-picker ai-mode-picker">
-                        <div className="branch-picker-title">Mode:</div>
-                        <button onClick={() => handleAiFix("file-only")} className="branch-picker-option">
-                          📝 File Only
-                          <span className="branch-picker-hint">Creates CLAUDE/{ticket.key}.md</span>
-                        </button>
-                        <button onClick={() => handleAiFix("interactive")} className="branch-picker-option">
-                          💬 Interactive
-                          <span className="branch-picker-hint">Starts Claude, gives resume command</span>
-                        </button>
-                      </div>
-                    )}
-                  </>
+                  <Sparkles className="w-4 h-4" />
                 )}
-              </div>
+                Start with AI
+              </button>
             )}
             <a href={ticketUrl} target="_blank" rel="noopener noreferrer" className="btn-link">
               Open in JIRA <ExternalLink className="w-4 h-4" />
@@ -971,6 +881,15 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
 
         {/* Local Notes */}
         <NotesEditor type="ticket" id={ticket.key} />
+
+        {/* AI Session Panel */}
+        {aiSessionJobId && (
+          <AISessionPanel
+            jobId={aiSessionJobId}
+            ticketKey={ticket.key}
+            onClose={() => setAiSessionJobId(null)}
+          />
+        )}
       </div>
 
       {/* Attachment Preview Modal */}

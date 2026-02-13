@@ -2,6 +2,8 @@ import { spawn } from "child_process";
 import * as path from "path";
 import type { ConfigService } from "./configService";
 import type { JiraService, JiraIssue } from "./jiraService";
+import { adfToMarkdown } from "../shared/adfToMarkdown";
+import { query as claudeQuery } from "@anthropic-ai/claude-agent-sdk";
 
 export type AIFixMode = "file-only" | "interactive";
 
@@ -18,6 +20,25 @@ export interface AIFixOptions {
 export interface TicketContext {
   ticket: JiraIssue;
   parentTicket?: JiraIssue;
+}
+
+// --- Start with AI types ---
+
+export type AIStreamEvent =
+  | { type: "status"; message: string }
+  | { type: "session_id"; sessionId: string }
+  | { type: "assistant_text"; text: string }
+  | { type: "tool_use"; toolName: string; toolInput: string }
+  | { type: "result"; sessionId: string; costUsd: number; durationMs: number; numTurns: number }
+  | { type: "error"; message: string }
+  | { type: "file_created"; filePath: string };
+
+export interface StartWithAIOptions {
+  ticketKey: string;
+  repoPath: string;
+  onEvent: (event: AIStreamEvent) => void;
+  onComplete: (sessionId: string) => void;
+  signal?: AbortSignal;
 }
 
 export class AIService {
@@ -134,6 +155,268 @@ Do not commit - leave changes staged or unstaged for review.
 `;
 
     return prompt;
+  }
+
+  /**
+   * Build the start.md content for Start with AI
+   */
+  buildStartMd(context: TicketContext): string {
+    const { ticket, parentTicket } = context;
+
+    let md = `# ${ticket.key}: ${ticket.fields.summary}\n\n`;
+
+    // Metadata
+    md += `| Field | Value |\n|-------|-------|\n`;
+    md += `| Type | ${ticket.fields.issuetype.name} |\n`;
+    md += `| Status | ${ticket.fields.status.name} |\n`;
+    md += `| Priority | ${ticket.fields.priority?.name || "Not set"} |\n`;
+    if (parentTicket) {
+      md += `| Parent | ${parentTicket.key}: ${parentTicket.fields.summary} |\n`;
+    }
+    md += "\n";
+
+    // Description
+    if (ticket.fields.description) {
+      md += `## Description\n\n`;
+      const description = adfToMarkdown(ticket.fields.description);
+      md += description + "\n\n";
+    }
+
+    // Parent description for context
+    if (parentTicket?.fields.description) {
+      md += `## Parent Context (${parentTicket.key})\n\n`;
+      const parentDesc = adfToMarkdown(parentTicket.fields.description);
+      md += parentDesc + "\n\n";
+    }
+
+    // Acceptance criteria
+    const acceptanceCriteria = (ticket.fields as any).customfield_10037;
+    if (acceptanceCriteria) {
+      md += `## Acceptance Criteria\n\n`;
+      md += typeof acceptanceCriteria === "string"
+        ? acceptanceCriteria
+        : adfToMarkdown(acceptanceCriteria);
+      md += "\n\n";
+    }
+
+    // Subtasks
+    if (ticket.fields.subtasks && ticket.fields.subtasks.length > 0) {
+      md += `## Subtasks\n\n`;
+      for (const subtask of ticket.fields.subtasks) {
+        const done = subtask.fields.status.name.toLowerCase() === "done";
+        md += `- [${done ? "x" : " "}] ${subtask.key}: ${subtask.fields.summary} (${subtask.fields.status.name})\n`;
+      }
+      md += "\n";
+    }
+
+    // Clues section
+    md += `## Clues\n\n`;
+    md += `_Add any hints, relevant file paths, or context that might help._\n`;
+
+    return md;
+  }
+
+  /**
+   * Start with AI using the Claude Agent SDK
+   */
+  async startWithAI(options: StartWithAIOptions): Promise<void> {
+    const { ticketKey, repoPath, onEvent, onComplete, signal } = options;
+
+    // Check if AI is enabled
+    const isEnabled = await this.configService.isAIEnabled();
+    if (!isEnabled) {
+      onEvent({ type: "error", message: "AI features are not enabled. Set ai.enabled: true in ~/.buddy.yaml" });
+      return;
+    }
+
+    onEvent({ type: "status", message: `Fetching ticket ${ticketKey} details...` });
+
+    // Get ticket context
+    let context: TicketContext;
+    try {
+      context = await this.getTicketContext(ticketKey);
+      onEvent({ type: "status", message: `Ticket: ${context.ticket.fields.summary}` });
+    } catch (err) {
+      onEvent({ type: "error", message: `Failed to fetch ticket: ${err}` });
+      return;
+    }
+
+    // Create ticket directory
+    const ticketDir = path.join(repoPath, ".claude", "tickets", ticketKey);
+    try {
+      await Bun.$`mkdir -p ${ticketDir}`.quiet();
+    } catch (err) {
+      onEvent({ type: "error", message: `Failed to create ticket directory: ${err}` });
+      return;
+    }
+
+    // Write start.md
+    const startMdPath = path.join(ticketDir, "start.md");
+    try {
+      const startMdContent = this.buildStartMd(context);
+      await Bun.write(startMdPath, startMdContent);
+      onEvent({ type: "file_created", filePath: `.claude/tickets/${ticketKey}/start.md` });
+      onEvent({ type: "status", message: `Created .claude/tickets/${ticketKey}/start.md` });
+    } catch (err) {
+      onEvent({ type: "error", message: `Failed to write start.md: ${err}` });
+      return;
+    }
+
+    // Ensure the start-ticket command exists in the target repo
+    const commandDir = path.join(repoPath, ".claude", "commands");
+    const commandPath = path.join(commandDir, "start-ticket.md");
+    try {
+      const exists = await Bun.file(commandPath).exists();
+      if (!exists) {
+        await Bun.$`mkdir -p ${commandDir}`.quiet();
+        // Copy our command file to the target repo
+        const sourceCommand = path.join(import.meta.dir, "..", ".claude", "commands", "start-ticket.md");
+        const sourceExists = await Bun.file(sourceCommand).exists();
+        if (sourceExists) {
+          const content = await Bun.file(sourceCommand).text();
+          await Bun.write(commandPath, content);
+        } else {
+          // Fallback: write inline
+          await Bun.write(commandPath, `Read the ticket start file at \`.claude/tickets/$ARGUMENTS/start.md\` to understand the ticket requirements.
+
+Then follow this workflow:
+
+1. **Explore the codebase** — Understand the architecture, patterns, and relevant code areas
+2. **Create a plan** — Write your implementation plan to \`.claude/tickets/$ARGUMENTS/plan.md\`
+3. **Begin implementation** — Start implementing the plan
+4. **Track progress** — Update \`.claude/tickets/$ARGUMENTS/trace.md\` as you work
+
+Important:
+- Do NOT commit changes — leave them for review
+- Follow any guidelines in CLAUDE.md if it exists
+- Be thorough in your investigation before making changes
+- Work autonomously — do not ask questions, make reasonable decisions
+`);
+        }
+        onEvent({ type: "file_created", filePath: `.claude/commands/start-ticket.md` });
+      }
+    } catch {
+      // Non-fatal: the command file is a convenience
+    }
+
+    onEvent({ type: "status", message: "Starting Claude Agent SDK..." });
+
+    // Create abort controller
+    const abortController = new AbortController();
+    if (signal) {
+      signal.addEventListener("abort", () => abortController.abort());
+    }
+
+    try {
+      // Strip CLAUDECODE env var to avoid "nested session" rejection
+      const cleanEnv = { ...process.env };
+      delete cleanEnv.CLAUDECODE;
+
+      const q = claudeQuery({
+        prompt: `/start-ticket ${ticketKey}`,
+        options: {
+          cwd: repoPath,
+          permissionMode: "acceptEdits",
+          model: "claude-opus-4-6",
+          includePartialMessages: true,
+          settingSources: ["project"],
+          systemPrompt: { type: "preset", preset: "claude_code" },
+          tools: { type: "preset", preset: "claude_code" },
+          abortController,
+          env: cleanEnv,
+        },
+      });
+
+      let sessionId = "";
+
+      for await (const message of q) {
+        if (signal?.aborted) break;
+
+        switch (message.type) {
+          case "system": {
+            if (message.subtype === "init") {
+              sessionId = message.session_id;
+              onEvent({ type: "session_id", sessionId });
+              onEvent({ type: "status", message: `Session started (model: ${(message as any).model})` });
+            }
+            break;
+          }
+
+          case "stream_event": {
+            const event = (message as any).event;
+            if (!event) break;
+
+            switch (event.type) {
+              case "content_block_start": {
+                const block = event.content_block;
+                if (block?.type === "tool_use") {
+                  onEvent({ type: "tool_use", toolName: block.name, toolInput: "" });
+                }
+                break;
+              }
+              case "content_block_delta": {
+                const delta = event.delta;
+                if (delta?.type === "text_delta" && delta.text) {
+                  onEvent({ type: "assistant_text", text: delta.text });
+                }
+                break;
+              }
+            }
+            break;
+          }
+
+          case "assistant": {
+            if (message.message?.content) {
+              for (const block of message.message.content) {
+                if (block.type === "tool_use") {
+                  const inputStr = typeof block.input === "string"
+                    ? block.input
+                    : JSON.stringify(block.input, null, 2);
+                  onEvent({
+                    type: "tool_use",
+                    toolName: block.name,
+                    toolInput: inputStr.length > 500 ? inputStr.slice(0, 500) + "..." : inputStr,
+                  });
+                }
+              }
+            }
+            break;
+          }
+
+          case "tool_use_summary": {
+            onEvent({ type: "status", message: (message as any).summary });
+            break;
+          }
+
+          case "result": {
+            onEvent({
+              type: "result",
+              sessionId: (message as any).session_id,
+              costUsd: (message as any).total_cost_usd,
+              durationMs: (message as any).duration_ms,
+              numTurns: (message as any).num_turns,
+            });
+
+            if ((message as any).is_error) {
+              const errors = "errors" in message ? (message as any).errors : [];
+              onEvent({
+                type: "error",
+                message: `Session ended with error: ${errors.join(", ") || "unknown"}`,
+              });
+            }
+            break;
+          }
+        }
+      }
+
+      onComplete(sessionId);
+    } catch (err: any) {
+      if (err?.name === "AbortError" || signal?.aborted) {
+        onEvent({ type: "status", message: "Session cancelled" });
+        return;
+      }
+      onEvent({ type: "error", message: `Claude SDK error: ${err?.message || err}` });
+    }
   }
 
   /**

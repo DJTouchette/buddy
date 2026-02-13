@@ -24,6 +24,7 @@
     "bud": "./index.ts"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.41",
     "@aws-sdk/client-appsync": "^3.969.0",
     "@aws-sdk/client-cloudformation": "^3.968.0",
     "@aws-sdk/client-cloudwatch-logs": "^3.969.0",

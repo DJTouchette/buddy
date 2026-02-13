@@ -286,6 +286,7 @@ export async function startUIServer(port: number) {
       "/jobs": index,
       "/ctest": index,
       "/ai-docs": index,
+      "/ai-test": index,
       "/settings": index,
 
       // API routes from modules

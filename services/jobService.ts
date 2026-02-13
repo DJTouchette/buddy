@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import * as path from "path";
 import * as os from "os";
 
-export type JobType = "build" | "deploy" | "diff" | "synth" | "deploy-lambda" | "tail-logs" | "ai-fix" | "ctest";
+export type JobType = "build" | "deploy" | "diff" | "synth" | "deploy-lambda" | "tail-logs" | "ai-fix" | "ai-start" | "ctest";
 export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "awaiting_approval";
 
 export interface Job {

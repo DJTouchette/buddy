@@ -13,6 +13,7 @@ import { JobsPage } from "./pages/JobsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { CTestPage } from "./pages/CTestPage";
 import { DocsPage } from "./pages/DocsPage";
+import { AITestPage } from "./pages/AITestPage";
 
 interface Route {
   path: string;
@@ -36,6 +37,7 @@ const routes: Route[] = [
   { path: "/jobs", component: JobsPage },
   { path: "/ctest", component: CTestPage },
   { path: "/ai-docs", component: DocsPage },
+  { path: "/ai-test", component: AITestPage },
   { path: "/settings", component: SettingsPage },
 ];
 
