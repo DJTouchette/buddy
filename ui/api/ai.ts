@@ -485,6 +485,76 @@ Important:
       }),
     },
 
+    // GET /api/ai/session-transcript/:sessionId - Read Claude session JSONL transcript
+    "/api/ai/session-transcript/:sessionId": {
+      GET: handler(async (req: Request & { params: { sessionId: string } }) => {
+        const { sessionId } = req.params;
+        const url = new URL(req.url);
+        const afterLine = parseInt(url.searchParams.get("after") || "0", 10);
+
+        const selectedRepo = ctx.cacheService.getSelectedRepo();
+        if (!selectedRepo) {
+          return errorResponse("No repository selected", 400);
+        }
+
+        // Claude stores sessions at ~/.claude/projects/-<path-with-dashes>/<sessionId>.jsonl
+        const projectSlug = selectedRepo.path.replace(/\//g, "-");
+        const home = process.env.HOME || process.env.USERPROFILE || "";
+        const jsonlPath = path.join(home, ".claude", "projects", projectSlug, `${sessionId}.jsonl`);
+
+        try {
+          const file = Bun.file(jsonlPath);
+          if (!(await file.exists())) {
+            return Response.json({ messages: [], totalLines: 0 });
+          }
+
+          const text = await file.text();
+          const lines = text.trim().split("\n");
+          const newLines = lines.slice(afterLine);
+          const messages: any[] = [];
+
+          for (const line of newLines) {
+            try {
+              const msg = JSON.parse(line);
+              // Only include assistant messages with content
+              if (msg.type === "assistant" && msg.message?.content) {
+                const content: any[] = [];
+                for (const block of msg.message.content) {
+                  if (block.type === "text" && block.text) {
+                    content.push({ type: "text", text: block.text });
+                  } else if (block.type === "tool_use") {
+                    const inputStr = typeof block.input === "string"
+                      ? block.input
+                      : JSON.stringify(block.input, null, 2);
+                    content.push({
+                      type: "tool_use",
+                      name: block.name,
+                      input: inputStr.length > 500 ? inputStr.slice(0, 500) + "..." : inputStr,
+                    });
+                  }
+                }
+                if (content.length > 0) {
+                  messages.push({ type: "assistant", content });
+                }
+              } else if (msg.type === "user" && msg.message?.content && !msg.isMeta) {
+                // Include tool results from user messages
+                const text = typeof msg.message.content === "string"
+                  ? msg.message.content
+                  : null;
+                if (text && text.length < 2000) {
+                  messages.push({ type: "user", text });
+                }
+              }
+            } catch {}
+          }
+
+          return Response.json({ messages, totalLines: lines.length });
+        } catch {
+          return Response.json({ messages: [], totalLines: 0 });
+        }
+      }),
+    },
+
     // GET /api/ai/fix-ticket/:jobId/stream - Stream AI fix output
     "/api/ai/fix-ticket/:jobId/stream": {
       GET: handler(async (req: Request) => {

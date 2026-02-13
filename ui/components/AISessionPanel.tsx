@@ -2,17 +2,10 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { X, Copy, Terminal, StopCircle, Loader2, CheckCircle, XCircle, ArrowDown } from "lucide-react";
 import { Markdown } from "./Markdown";
 
-interface AIStreamEvent {
-  type: "status" | "session_id" | "assistant_text" | "tool_use" | "result" | "error" | "file_created";
-  message?: string;
-  sessionId?: string;
+interface TranscriptBlock {
+  type: "assistant" | "user";
+  content?: { type: string; text?: string; name?: string; input?: string }[];
   text?: string;
-  toolName?: string;
-  toolInput?: string;
-  costUsd?: number;
-  durationMs?: number;
-  numTurns?: number;
-  filePath?: string;
 }
 
 interface AISessionPanelProps {
@@ -21,16 +14,18 @@ interface AISessionPanelProps {
   onClose: () => void;
 }
 
-type TabName = "output" | "plan" | "trace" | "start";
+type TabName = "conversation" | "plan" | "trace" | "start";
 
 export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProps) {
-  const [events, setEvents] = useState<AIStreamEvent[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(true);
   const [jobStatus, setJobStatus] = useState<string>("running");
-  const [activeTab, setActiveTab] = useState<TabName>("output");
+  const [activeTab, setActiveTab] = useState<TabName>("conversation");
   const [autoScroll, setAutoScroll] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [transcript, setTranscript] = useState<TranscriptBlock[]>([]);
+  const [transcriptLines, setTranscriptLines] = useState(0);
+  const [resultInfo, setResultInfo] = useState<{ durationMs?: number; numTurns?: number } | null>(null);
   const [ticketFiles, setTicketFiles] = useState<{
     startMd: string | null;
     planMd: string | null;
@@ -38,30 +33,25 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
   }>({ startMd: null, planMd: null, traceMd: null });
 
   const outputRef = useRef<HTMLDivElement>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
 
-  // Connect to job output SSE
+  // Connect to job output SSE for status events (session_id, result, completion)
   useEffect(() => {
     const eventSource = new EventSource(`/api/jobs/${jobId}/output`);
-    eventSourceRef.current = eventSource;
 
     eventSource.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data);
 
         if (data.line) {
-          // Try to parse as AIStreamEvent JSON
           try {
-            const event: AIStreamEvent = JSON.parse(data.line);
-            setEvents((prev) => [...prev, event]);
-
+            const event = JSON.parse(data.line);
             if (event.type === "session_id" && event.sessionId) {
               setSessionId(event.sessionId);
             }
-          } catch {
-            // Not JSON, treat as plain text status line
-            setEvents((prev) => [...prev, { type: "status", message: data.line }]);
-          }
+            if (event.type === "result") {
+              setResultInfo({ durationMs: event.durationMs, numTurns: event.numTurns });
+            }
+          } catch {}
         }
 
         if (data.done) {
@@ -69,9 +59,7 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
           setJobStatus(data.status);
           eventSource.close();
         }
-      } catch (err) {
-        console.error("Failed to parse SSE data:", err);
-      }
+      } catch {}
     };
 
     eventSource.onerror = () => {
@@ -83,12 +71,34 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
     };
   }, [jobId]);
 
+  // Poll session transcript from JSONL file
+  useEffect(() => {
+    if (!sessionId) return;
+
+    const fetchTranscript = async () => {
+      try {
+        const res = await fetch(`/api/ai/session-transcript/${sessionId}?after=${transcriptLines}`);
+        const data = await res.json();
+        if (data.messages && data.messages.length > 0) {
+          setTranscript((prev) => [...prev, ...data.messages]);
+        }
+        if (data.totalLines > transcriptLines) {
+          setTranscriptLines(data.totalLines);
+        }
+      } catch {}
+    };
+
+    fetchTranscript();
+    const interval = setInterval(fetchTranscript, 3000);
+    return () => clearInterval(interval);
+  }, [sessionId, isRunning, transcriptLines]);
+
   // Auto-scroll
   useEffect(() => {
-    if (autoScroll && outputRef.current && activeTab === "output") {
+    if (autoScroll && outputRef.current && activeTab === "conversation") {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
-  }, [events, autoScroll, activeTab]);
+  }, [transcript, autoScroll, activeTab]);
 
   // Scroll handler
   const handleScroll = useCallback(() => {
@@ -146,33 +156,8 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
     } catch {}
   }, [jobId]);
 
-  // Collapse consecutive assistant_text events into single blocks for display
-  const displayEvents = React.useMemo(() => {
-    const collapsed: AIStreamEvent[] = [];
-    let textAccum = "";
-
-    for (const event of events) {
-      if (event.type === "assistant_text") {
-        textAccum += event.text || "";
-      } else {
-        if (textAccum) {
-          collapsed.push({ type: "assistant_text", text: textAccum });
-          textAccum = "";
-        }
-        collapsed.push(event);
-      }
-    }
-    if (textAccum) {
-      collapsed.push({ type: "assistant_text", text: textAccum });
-    }
-    return collapsed;
-  }, [events]);
-
-  // Get result event (last one)
-  const resultEvent = events.findLast((e) => e.type === "result");
   const isDone = !isRunning;
   const isSuccess = jobStatus === "completed";
-  const isFailed = jobStatus === "failed" || jobStatus === "cancelled";
 
   const getFileContent = (): string | null => {
     switch (activeTab) {
@@ -228,10 +213,10 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
       {/* Tabs */}
       <div className="ai-session-tabs">
         <button
-          className={`ai-session-tab ${activeTab === "output" ? "active" : ""}`}
-          onClick={() => setActiveTab("output")}
+          className={`ai-session-tab ${activeTab === "conversation" ? "active" : ""}`}
+          onClick={() => setActiveTab("conversation")}
         >
-          Output
+          Conversation
           {isRunning && <Loader2 className="w-3 h-3 animate-spin" />}
         </button>
         <button
@@ -260,10 +245,13 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
       </div>
 
       {/* Content area */}
-      {activeTab === "output" ? (
+      {activeTab === "conversation" ? (
         <div className="ai-session-output" ref={outputRef} onScroll={handleScroll}>
-          {displayEvents.map((event, i) => (
-            <AIEventLine key={i} event={event} />
+          {transcript.length === 0 && isRunning && (
+            <div className="ai-event ai-event-status">Waiting for session to start...</div>
+          )}
+          {transcript.map((block, i) => (
+            <TranscriptBlockView key={i} block={block} />
           ))}
           {isRunning && <div className="job-output-cursor">_</div>}
         </div>
@@ -280,7 +268,7 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
       )}
 
       {/* Jump to bottom */}
-      {activeTab === "output" && !autoScroll && (
+      {activeTab === "conversation" && !autoScroll && (
         <button className="job-output-jump-bottom" onClick={scrollToBottom} title="Jump to bottom">
           <ArrowDown className="w-4 h-4" />
           Jump to bottom
@@ -290,10 +278,10 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
       {/* Footer */}
       <div className="ai-session-footer">
         <div className="ai-session-stats">
-          {resultEvent && (
+          {resultInfo && (
             <>
-              <span>Duration: {Math.round((resultEvent.durationMs || 0) / 1000)}s</span>
-              <span>Turns: {resultEvent.numTurns}</span>
+              <span>Duration: {Math.round((resultInfo.durationMs || 0) / 1000)}s</span>
+              <span>Turns: {resultInfo.numTurns}</span>
             </>
           )}
         </div>
@@ -308,53 +296,34 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
   );
 }
 
-function AIEventLine({ event }: { event: AIStreamEvent }) {
-  switch (event.type) {
-    case "status":
-      return <div className="ai-event ai-event-status">{event.message}</div>;
-
-    case "session_id":
-      return (
-        <div className="ai-event ai-event-status">
-          Session ID: {event.sessionId}
-        </div>
-      );
-
-    case "assistant_text":
-      return (
-        <div className="ai-event ai-event-assistant">
-          <Markdown content={event.text || ""} />
-        </div>
-      );
-
-    case "tool_use":
-      return (
-        <div className="ai-event ai-event-tool">
-          <span className="ai-event-tool-name">{event.toolName}</span>
-          {event.toolInput && (
-            <pre className="ai-event-tool-input">{event.toolInput}</pre>
-          )}
-        </div>
-      );
-
-    case "result":
-      return (
-        <div className="ai-event ai-event-result">
-          Session complete — Duration: {Math.round((event.durationMs || 0) / 1000)}s | Turns: {event.numTurns}
-        </div>
-      );
-
-    case "error":
-      return <div className="ai-event ai-event-error">{event.message}</div>;
-
-    case "file_created":
-      return (
-        <div className="ai-event ai-event-file">
-          Created: {event.filePath}
-        </div>
-      );
-
-    default:
-      return null;
+function TranscriptBlockView({ block }: { block: TranscriptBlock }) {
+  if (block.type === "assistant" && block.content) {
+    return (
+      <>
+        {block.content.map((item, i) => {
+          if (item.type === "text" && item.text) {
+            return (
+              <div key={i} className="ai-event ai-event-assistant">
+                <Markdown content={item.text} />
+              </div>
+            );
+          }
+          if (item.type === "tool_use") {
+            return (
+              <div key={i} className="ai-event ai-event-tool">
+                <span className="ai-event-tool-name">{item.name}</span>
+                {item.input && (
+                  <pre className="ai-event-tool-input">{item.input}</pre>
+                )}
+              </div>
+            );
+          }
+          return null;
+        })}
+      </>
+    );
   }
+
+  // Skip user messages (tool results) — they're noisy
+  return null;
 }
