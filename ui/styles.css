@@ -8342,3 +8342,261 @@ a:hover {
   border-color: var(--link);
   background: color-mix(in srgb, var(--link) 10%, var(--card));
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   E2E Test Results Page
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.e2e-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.e2e-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.e2e-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.e2e-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.e2e-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.e2e-run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.e2e-run-card {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: var(--card);
+}
+
+.e2e-run-card.expanded {
+  border-color: var(--link);
+}
+
+.e2e-run-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  gap: 0.75rem;
+  transition: background 0.1s;
+}
+
+.e2e-run-card-header:hover {
+  background: var(--muted);
+}
+
+.e2e-run-card-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.e2e-run-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.e2e-run-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.e2e-run-date {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.e2e-run-card-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-shrink: 0;
+}
+
+.e2e-run-counts {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.e2e-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.e2e-count-passed { color: #15803d; }
+.e2e-count-failed { color: #dc2626; }
+.e2e-count-other { color: var(--muted-foreground); }
+.e2e-count-total { color: var(--muted-foreground); font-size: 0.75rem; }
+
+:root.dark .e2e-count-passed { color: #4ade80; }
+:root.dark .e2e-count-failed { color: #f87171; }
+
+.e2e-run-duration {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.e2e-run-details {
+  border-top: 1px solid var(--border);
+}
+
+/* Results table (reuse ctest patterns) */
+.e2e-results-table {
+  overflow: hidden;
+}
+
+.e2e-results-header {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: var(--muted);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  color: var(--muted-foreground);
+}
+
+.e2e-results-body {
+  max-height: calc(100vh - 400px);
+  overflow-y: auto;
+}
+
+.e2e-results-col-status {
+  width: 3rem;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.e2e-results-col-name {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.e2e-results-col-duration {
+  width: 5rem;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  font-family: ui-monospace, monospace;
+}
+
+.e2e-result-row {
+  display: flex;
+  align-items: center;
+  padding: 0.375rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+  flex-wrap: wrap;
+}
+
+.e2e-result-row:last-child {
+  border-bottom: none;
+}
+
+.e2e-result-row.clickable {
+  cursor: pointer;
+}
+
+.e2e-result-row.clickable:hover {
+  background: var(--muted);
+}
+
+.e2e-result-failed {
+  background: hsl(0 72% 51% / 0.04);
+}
+
+:root.dark .e2e-result-failed {
+  background: hsl(0 72% 51% / 0.08);
+}
+
+.e2e-error-output {
+  width: 100%;
+  padding: 0.75rem;
+  margin-top: 0.375rem;
+  background: var(--muted);
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-family: ui-monospace, monospace;
+  overflow-x: auto;
+}
+
+.e2e-error-message {
+  color: #dc2626;
+  margin-bottom: 0.5rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+:root.dark .e2e-error-message {
+  color: #f87171;
+}
+
+.e2e-stack-trace {
+  color: var(--muted-foreground);
+  white-space: pre;
+  font-size: 0.6875rem;
+  margin: 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Playwright
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.pw-project-select {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}

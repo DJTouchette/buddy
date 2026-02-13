@@ -3,6 +3,8 @@ import { BuildJobStrategy } from "./strategies/BuildJobStrategy";
 import { CdkJobStrategy } from "./strategies/CdkJobStrategy";
 import { DeployLambdaJobStrategy } from "./strategies/DeployLambdaJobStrategy";
 import { TailLogsJobStrategy } from "./strategies/TailLogsJobStrategy";
+import { FrontendBuildJobStrategy } from "./strategies/FrontendBuildJobStrategy";
+import { BuildDeployAllJobStrategy } from "./strategies/BuildDeployAllJobStrategy";
 
 const strategies: Record<string, JobStrategy> = {
   build: new BuildJobStrategy(),
@@ -11,6 +13,8 @@ const strategies: Record<string, JobStrategy> = {
   synth: new CdkJobStrategy("synth"),
   "deploy-lambda": new DeployLambdaJobStrategy(),
   "tail-logs": new TailLogsJobStrategy(),
+  "build-frontend": new FrontendBuildJobStrategy(),
+  "build-deploy-all": new BuildDeployAllJobStrategy(),
 };
 
 export async function executeJob(

@@ -179,12 +179,15 @@ Make sure you're running Claude Code from within a git repository when using git
 
 ## Architecture
 
-Buddy operates in two modes:
+Buddy operates in three modes:
 
-1. **CLI Mode** - Direct command-line usage: `bud jira ticket`, `bud sc branch`, etc.
-2. **MCP Server Mode** - Exposes tools to Claude Code via stdio transport
+1. **Web UI Mode** - Full dashboard at `http://localhost:3456` with 90+ API endpoints (`bud ui`)
+2. **CLI Mode** - Direct command-line usage: `bud jira ticket`, `bud sc branch`, etc.
+3. **MCP Server Mode** - Exposes tools to Claude Code via stdio transport (`bud mcp serve`)
 
-Both modes share the same underlying services and business logic, ensuring feature parity.
+All three modes share the same underlying services and business logic. The API is self-documenting — hit `GET /api/endpoints` when the web UI is running for a full endpoint catalog.
+
+See [CLAUDE.md](./CLAUDE.md) for architecture details and coding conventions.
 
 ## Configuration
 

@@ -11,7 +11,7 @@ import { InfraPage } from "./pages/InfraPage";
 import { AppSyncPage } from "./pages/AppSyncPage";
 import { JobsPage } from "./pages/JobsPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { CTestPage } from "./pages/CTestPage";
+import { TestsPage } from "./pages/TestsPage";
 import { DocsPage } from "./pages/DocsPage";
 import { AITestPage } from "./pages/AITestPage";
 
@@ -35,7 +35,7 @@ const routes: Route[] = [
   { path: "/infra", component: InfraPage },
   { path: "/appsync", component: AppSyncPage },
   { path: "/jobs", component: JobsPage },
-  { path: "/ctest", component: CTestPage },
+  { path: "/tests", component: TestsPage },
   { path: "/ai-docs", component: DocsPage },
   { path: "/ai-test", component: AITestPage },
   { path: "/settings", component: SettingsPage },

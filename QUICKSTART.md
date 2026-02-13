@@ -153,11 +153,20 @@ bud ui
 ```
 
 **Pages:**
-- `/tickets` - View JIRA sprint tickets with linked PRs
-- `/prs` - View Azure DevOps pull requests
-- `/git` - Manage Git repositories and branches
-- `/infra` - Build lambdas, deploy CDK stacks
-- `/settings` - Configure poll intervals and protected environments
+- `/dashboard` - Overview: issues, PRs, reviews, team activity
+- `/stats` - Metrics dashboard (tickets and PRs over 12 months)
+- `/tickets` - JIRA sprint tickets with linked PRs
+- `/tickets/PROJ-123` - Full ticket detail with comments, attachments, notes
+- `/prs` - Azure DevOps pull requests with search and filters
+- `/prs/create` - Create a new PR with JIRA integration
+- `/prs/123` - PR detail with reviewers, threads, build checks
+- `/git` - Repository management, branch switching, checkout
+- `/infra` - Lambda builds, CDK deploys, frontend builds, CloudWatch logs
+- `/appsync` - GraphQL API explorer with Cognito auth
+- `/jobs` - Monitor running builds, deploys, and test jobs
+- `/tests` - C# tests, Playwright tests, E2E pipeline results
+- `/ai-docs` - AI features and documentation
+- `/settings` - Poll interval, protected environments, cache
 
 ### CLI Commands
 
@@ -173,7 +182,22 @@ bud sc push              # Push to remote
 # Pull Requests
 bud pr create            # Create PR with JIRA details
 bud pr status            # View PR status
+
+# Repositories
+bud repo scan            # Scan for git repos
 ```
+
+---
+
+## API Documentation
+
+The API is self-documenting. With the server running, hit:
+
+```
+GET http://localhost:3456/api/endpoints
+```
+
+This returns a JSON catalog of all 90+ API endpoints with descriptions, parameters, and expected request bodies.
 
 ---
 
@@ -220,3 +244,4 @@ netstat -ano | findstr :3456  # Windows
 - [README.md](./README.md) - Full documentation
 - [INSTALL.md](./INSTALL.md) - Detailed installation guide
 - [MCP_SETUP.md](./MCP_SETUP.md) - Claude Code integration details
+- [CLAUDE.md](./CLAUDE.md) - Architecture and coding conventions

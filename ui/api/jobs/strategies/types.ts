@@ -20,6 +20,7 @@ export interface JobParams {
   target: string;
   backendPath?: string;
   infraPath?: string;
+  clientsPath?: string;
   awsFunctionName?: string;
   skipBuild?: boolean;
 }

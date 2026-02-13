@@ -48,7 +48,7 @@ export function Layout({ children, currentPath, navigate }: LayoutProps) {
     { path: "/infra", label: "Infrastructure" },
     { path: "/appsync", label: "AppSync" },
     { path: "/jobs", label: "Jobs" },
-    { path: "/ctest", label: "C# Tests" },
+    { path: "/tests", label: "Tests" },
     { path: "/ai-docs", label: "AI" },
   ];
 

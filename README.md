@@ -2,17 +2,22 @@
 
 A developer dashboard and CLI tool that integrates JIRA, Git, Azure DevOps, and AWS infrastructure management.
 
-**📖 New to Buddy?** See [QUICKSTART.md](./QUICKSTART.md) for a 5-minute setup guide.
+**New to Buddy?** See [QUICKSTART.md](./QUICKSTART.md) for a 5-minute setup guide.
 
 ## Features
 
-- 🖥️ **Web Dashboard** - Visual interface for tickets, PRs, Git, and infrastructure
-- 🎫 **JIRA Integration** - Search issues, manage sprints, transition tickets
-- 🌿 **Git Operations** - Branch management, commits, push/pull
-- 🔄 **Pull Requests** - Create and manage Azure DevOps PRs
-- 🏗️ **Infrastructure** - AWS Lambda builds, CDK deploys, CloudWatch logs
-- 🤖 **MCP Server** - Use Buddy as a tool within Claude Code conversations
-- 🪟 **Cross-Platform** - Build for Windows from WSL
+- **Web Dashboard** - Visual interface for tickets, PRs, Git, infrastructure, and more
+- **JIRA Integration** - Search issues, manage sprints, transition tickets, add comments
+- **Git Operations** - Branch management, commits, push/pull, ticket-based checkout
+- **Pull Requests** - Create and manage Azure DevOps PRs with reviewer workflows
+- **Infrastructure** - AWS Lambda builds, CDK deploys, CloudWatch logs, environment management
+- **Frontend Builds** - Build and deploy frontend clients (web, payment portal)
+- **AppSync** - GraphQL API explorer with Cognito auth and schema browsing
+- **AI Integration** - Claude-powered ticket fixing and code generation
+- **Testing** - C# test runner, Playwright browser tests, E2E pipeline monitoring
+- **Documentation** - Built-in docs viewer and editor
+- **MCP Server** - Use Buddy as a tool within Claude Code conversations
+- **Cross-Platform** - Build for Windows from WSL
 
 ## Quick Start
 
@@ -46,9 +51,20 @@ On first launch, the setup wizard will guide you through configuring:
 - Organization, Project, and Repository ID are pre-filled from your base config
 - PAT Token: Create one at [Azure DevOps Tokens](https://businessinfusions.visualstudio.com/_usersSettings/tokens)
   - Click "New Token" at the top right
-  - Give it **Code (Read)** scope
+  - Give it **Code (Read & Write)** scope
 
 ## Web UI Pages
+
+### Dashboard (`/dashboard`)
+
+Overview of your work across all integrations:
+- Assigned issues, your PRs, PRs to review
+- Failed builds, stale PRs, blocked PRs
+- Team overview and recent activity
+
+### Stats (`/stats`)
+
+Metrics dashboard showing tickets and PRs over the past 12 months with monthly breakdowns.
 
 ### Tickets (`/tickets`)
 
@@ -56,6 +72,7 @@ View your JIRA sprint tickets with linked pull requests:
 - See ticket status, assignee, and story points
 - Quick links to JIRA tickets and associated PRs
 - Filter by status or search by ticket key/summary
+- Click into a ticket for full detail view with description, comments, attachments, and notes
 
 ### PRs (`/prs`)
 
@@ -63,6 +80,9 @@ View Azure DevOps pull requests:
 - See PR status, reviewers, and vote status
 - Links to associated JIRA tickets
 - Filter by PR status (Active, Completed, Abandoned)
+- Search by title, branch, or author
+- Click into a PR for full detail with threads, build checks, and reviewer management
+- Create new PRs from the `/prs/create` page
 
 ### Git (`/git`)
 
@@ -72,18 +92,60 @@ Manage your local Git repositories:
 - **Quick Checkout**: Fast checkout to base branches
   - `nextrelease` - New features or prepping for QA
   - `master` - Bug fixes only
+- Checkout branches from tickets or PRs
 - Fetch, pull, and view recent commits
 
 ### Infrastructure (`/infra`)
 
-Manage AWS Lambda functions and CDK deployments:
-- **Environments**: Switch between environments (e.g., `damien-1`, `devnext`)
-- **Lambda Functions**: View, build, and deploy individual lambdas
-- **Logs**: Tail CloudWatch logs in real-time
-- **CDK Commands**: Run diff, deploy, and synth operations
-- **Job Tracking**: Monitor build and deploy progress
+Manage AWS Lambda functions and CDK deployments across three tabs:
+
+**Build tab:**
+- View deployed CloudFormation stacks with diff and deploy actions
+- Lambda functions grouped by type (.NET, JS, Python, TypeScript Edge)
+- Build individual lambdas, by type, or all at once
+- **Build & Deploy BE** - Build all lambdas then deploy the backend CDK stack
+- **Build & Deploy FE** - Build the web client then deploy the frontend CDK stack
+- Monitor build progress with real-time streaming output
+
+**AWS Lambdas tab:**
+- Browse all deployed Lambda functions in the current environment
+- Search, view details, deploy code updates, tail CloudWatch logs
+
+**Frontend tab:**
+- **Build Web** and **Build Payment Portal** buttons for `clients/web` and `clients/paymentportal`
+- Auto-generate and save `.env` configuration for the current environment
+- View available AppSync APIs and copy URLs
 
 **Protected Environments**: `devnext` and `master` are protected by default - deployments are disabled to prevent accidental changes.
+
+### AppSync (`/appsync`)
+
+GraphQL API explorer:
+- Browse parsed GraphQL schema (queries, mutations, subscriptions)
+- Execute queries with variable support
+- Cognito authentication (login, token refresh)
+- User Pool and Client selection
+
+### Jobs (`/jobs`)
+
+Monitor all running and recent jobs:
+- Real-time streaming output for builds, deploys, and tests
+- Cancel running jobs
+- Approval flow for CDK deployments (diff review before deploy)
+
+### Tests (`/tests`)
+
+Testing hub with multiple test runners:
+- **C# Tests** - Discover and run .NET test projects
+- **Playwright** - Run browser automation tests (headed or headless)
+- **E2E Pipelines** - Monitor Azure DevOps E2E test pipeline runs and results
+
+### AI (`/ai-docs`)
+
+AI-powered features:
+- Documentation viewer and editor
+- AI ticket fixing with Claude Agent SDK
+- Session transcript viewer
 
 ### Settings (`/settings`)
 
@@ -96,17 +158,15 @@ Configure application settings:
 
 ## CLI Usage
 
-For CLI usage instead of the web UI:
-
 ```bash
 # Configure services via CLI
-bun run index.ts jira config
-bun run index.ts pr config
+bud jira config
+bud pr config
 
 # Use the CLI
-bun run index.ts jira ticket
-bun run index.ts sc branch my-feature
-bun run index.ts pr create
+bud jira ticket
+bud sc branch my-feature
+bud pr create
 ```
 
 ## Installation
@@ -146,9 +206,9 @@ bud ui
 
 Or add to PATH via GUI:
 1. Press `Win + R`, type `sysdm.cpl`, press Enter
-2. Go to **Advanced** tab → **Environment Variables**
-3. Under "User variables", select **Path** → **Edit**
-4. Click **New** → add `C:\Tools`
+2. Go to **Advanced** tab > **Environment Variables**
+3. Under "User variables", select **Path** > **Edit**
+4. Click **New** > add `C:\Tools`
 5. Click **OK** on all dialogs
 6. Restart your terminal
 
@@ -177,7 +237,7 @@ See [MCP_SETUP.md](./MCP_SETUP.md) for setup instructions.
 - `bud sc branch <name>` - Create a new branch
 - `bud sc add [files...]` - Stage files for commit
 - `bud sc push` - Push to remote
-- `bud sc workflow <branch>` - Full workflow: branch → add → commit → push
+- `bud sc workflow <branch>` - Full workflow: branch > add > commit > push
 
 ### Pull Requests (`bud pr`)
 - `bud pr create [target]` - Create PR with JIRA details
@@ -187,10 +247,20 @@ See [MCP_SETUP.md](./MCP_SETUP.md) for setup instructions.
 ### MCP Server (`bud mcp`)
 - `bud mcp serve` - Start MCP server (used by Claude Code)
 
+### Repositories (`bud repo`)
+- `bud repo scan` - Scan for git repositories
+
+### Web UI (`bud ui`)
+- `bud ui` - Start the web dashboard
+
+## API Documentation
+
+The API is self-documenting. Hit `GET /api/endpoints` for a full JSON catalog of all 90+ endpoints with descriptions, parameters, and expected request bodies.
+
 ## Build Scripts
 
 ```bash
-# 🚀 ONE COMMAND - Does everything (build + install + sync)
+# One command - build + install + sync
 bun run deploy
 
 # Or use individual commands:
@@ -246,6 +316,8 @@ bun run index.ts --help
 # Type checking
 bun run tsc --noEmit
 ```
+
+See [CLAUDE.md](./CLAUDE.md) for coding conventions and architecture details.
 
 ## Creating a Release
 

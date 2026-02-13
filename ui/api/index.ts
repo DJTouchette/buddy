@@ -14,6 +14,8 @@ import { aiRoutes } from "./ai";
 import { appsyncRoutes } from "./appsync";
 import { ctestRoutes } from "./ctest";
 import { docsRoutes } from "./docs";
+import { e2eRoutes } from "./e2e";
+import { playwrightRoutes } from "./playwright";
 
 export type { ApiContext, Services, ValidatedJiraConfig, ValidatedAzureConfig } from "./context";
 export { CACHE_KEY_TICKETS, CACHE_KEY_PRS, CACHE_KEY_DASHBOARD } from "./context";
@@ -38,5 +40,7 @@ export function createApiRoutes(ctx: ApiContext) {
     ...appsyncRoutes(ctx),
     ...ctestRoutes(ctx),
     ...docsRoutes(ctx),
+    ...e2eRoutes(ctx),
+    ...playwrightRoutes(ctx),
   };
 }

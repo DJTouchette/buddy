@@ -1,3 +1,4 @@
+import { join } from "path";
 import type { JobType } from "../../services/jobService";
 import { InfraService } from "../../services/infraService";
 import { LambdaBuilderService } from "../../services/lambdaBuilderService";
@@ -65,8 +66,8 @@ export function jobsRoutes(ctx: ApiContext) {
           target: body.target,
         });
 
-        // Check for protected environment on deploy/deploy-lambda
-        if (body.type === "deploy" || body.type === "deploy-lambda") {
+        // Check for protected environment on deploy/deploy-lambda/build-deploy-all
+        if (body.type === "deploy" || body.type === "deploy-lambda" || body.type === "build-deploy-all") {
           const currentEnv = await ctx.configService.getCurrentEnvironment();
           if (await isProtectedEnvironment(currentEnv, ctx.configService)) {
             ctx.jobService.updateJobStatus(
@@ -89,6 +90,7 @@ export function jobsRoutes(ctx: ApiContext) {
           target: body.target,
           backendPath: paths.backendPath,
           infraPath: paths.infraPath,
+          clientsPath: join(selectedRepo.path, "clients"),
           awsFunctionName: body.awsFunctionName,
           skipBuild: body.skipBuild,
         }, jobCtx);

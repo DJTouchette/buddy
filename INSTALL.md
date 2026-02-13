@@ -70,9 +70,12 @@ bud jira config
 
 # Configure Azure DevOps
 bud pr config
+
+# Scan for git repositories
+bud repo scan
 ```
 
-Configuration is stored in `~/.buddy.yaml`.
+Configuration is stored in `~/.buddy.yaml`. See [CLAUDE.md](./CLAUDE.md) for architecture details.
 
 ## MCP Server Setup
 

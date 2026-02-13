@@ -97,6 +97,40 @@ export interface PolicyEvaluation {
   };
 }
 
+export interface TestRun {
+  id: number;
+  name: string;
+  state: string;
+  totalTests: number;
+  passedTests: number;
+  failedTests: number;
+  startedDate: string;
+  completedDate: string;
+  buildConfiguration?: {
+    id: number;
+    number: string;
+    uri: string;
+  };
+  url: string;
+  webAccessUrl: string;
+}
+
+export interface TestResult {
+  id: number;
+  testCaseTitle: string;
+  outcome: string;
+  durationInMs: number;
+  errorMessage?: string;
+  stackTrace?: string;
+  automatedTestName: string;
+}
+
+export interface PipelineDefinition {
+  id: number;
+  name: string;
+  url: string;
+}
+
 export interface AzureDevOpsServiceOptions {
   organization: string;
   project: string;
@@ -418,6 +452,36 @@ export class AzureDevOpsService {
   getPRThreadUrl(pullRequestId: number, threadId?: number): string {
     const baseUrl = this.getPRWebUrl(pullRequestId);
     return threadId ? `${baseUrl}?discussionId=${threadId}` : baseUrl;
+  }
+
+  async getPipelineDefinitions(name?: string): Promise<PipelineDefinition[]> {
+    const nameFilter = name ? `&name=${encodeURIComponent(name)}` : "";
+    const response = await this.request<{ value: PipelineDefinition[] }>(
+      `/build/definitions?api-version=7.0${nameFilter}`
+    );
+    return response.value || [];
+  }
+
+  async getBuildsByDefinition(definitionId: number, top: number = 10): Promise<Build[]> {
+    const response = await this.request<{ value: Build[] }>(
+      `/build/builds?definitions=${definitionId}&$top=${top}&api-version=7.0`
+    );
+    return response.value || [];
+  }
+
+  async getTestRuns(buildUri?: string): Promise<TestRun[]> {
+    const buildFilter = buildUri ? `&buildUri=${encodeURIComponent(buildUri)}` : "";
+    const response = await this.request<{ value: TestRun[] }>(
+      `/test/runs?api-version=7.0${buildFilter}`
+    );
+    return response.value || [];
+  }
+
+  async getTestRunResults(runId: number, top: number = 1000): Promise<TestResult[]> {
+    const response = await this.request<{ value: TestResult[] }>(
+      `/test/runs/${runId}/results?$top=${top}&api-version=7.0`
+    );
+    return response.value || [];
   }
 
   formatPRForDisplay(pr: PullRequest): string {

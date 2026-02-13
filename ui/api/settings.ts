@@ -1,6 +1,7 @@
 import type { ApiContext } from "./context";
 import { CACHE_KEY_TICKETS, CACHE_KEY_PRS } from "./context";
 import { handler } from "./helpers";
+import { API_ENDPOINTS } from "./endpoints";
 import pkg from "../../package.json";
 
 export function settingsRoutes(ctx: ApiContext) {
@@ -134,6 +135,15 @@ export function settingsRoutes(ctx: ApiContext) {
           success: true,
           lastUpdate: new Date().toISOString(),
           nextRefresh: new Date(Date.now() + pollIntervalMinutes * 60 * 1000).toISOString(),
+        });
+      }),
+    },
+
+    // GET /api/endpoints - API documentation
+    "/api/endpoints": {
+      GET: handler(async () => {
+        return Response.json({
+          endpoints: API_ENDPOINTS,
         });
       }),
     },

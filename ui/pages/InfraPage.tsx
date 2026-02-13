@@ -768,14 +768,34 @@ export function InfraPage() {
             <Package className="w-5 h-5" />
             Lambdas ({lambdas.length})
           </h2>
-          <button
-            className="btn-primary"
-            onClick={() => startJob("build", "all")}
-            disabled={!!activeJob}
-          >
-            <Play className="w-4 h-4" />
-            Build All
-          </button>
+          <div className="flex gap-2">
+            <button
+              className="btn-primary"
+              onClick={() => startJob("build", "all")}
+              disabled={!!activeJob}
+            >
+              <Play className="w-4 h-4" />
+              Build All
+            </button>
+            <button
+              className="btn-primary"
+              onClick={() => startJob("build-deploy-all", "backend")}
+              disabled={!!activeJob || isEnvProtected}
+              title={isEnvProtected ? `Cannot deploy to protected environment "${currentEnv}"` : "Build all lambdas then deploy backend stack"}
+            >
+              <Rocket className="w-4 h-4" />
+              Build &amp; Deploy BE
+            </button>
+            <button
+              className="btn-primary"
+              onClick={() => startJob("build-deploy-all", "frontend")}
+              disabled={!!activeJob || isEnvProtected}
+              title={isEnvProtected ? `Cannot deploy to protected environment "${currentEnv}"` : "Build web client then deploy frontend stack"}
+            >
+              <Rocket className="w-4 h-4" />
+              Build &amp; Deploy FE
+            </button>
+          </div>
         </div>
 
         {Object.entries(lambdasByType).map(([type, typeLambdas]) => {
@@ -931,16 +951,36 @@ export function InfraPage() {
           <div className="section-header">
             <h2 className="section-title">
               <Monitor className="w-5 h-5" />
-              Frontend Environment
+              Frontend
             </h2>
-            <button
-              className="btn-secondary"
-              onClick={fetchFrontendData}
-              disabled={frontendEnvLoading}
-            >
-              <RefreshCw className={`w-4 h-4 ${frontendEnvLoading ? "animate-spin" : ""}`} />
-              Refresh
-            </button>
+            <div className="flex gap-2">
+              <button
+                className="btn-primary"
+                onClick={() => startJob("build-frontend", "web")}
+                disabled={!!activeJob}
+                title="Build clients/web"
+              >
+                <Hammer className="w-4 h-4" />
+                Build Web
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => startJob("build-frontend", "paymentportal")}
+                disabled={!!activeJob}
+                title="Build clients/paymentportal"
+              >
+                <Hammer className="w-4 h-4" />
+                Build Payment Portal
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={fetchFrontendData}
+                disabled={frontendEnvLoading}
+              >
+                <RefreshCw className={`w-4 h-4 ${frontendEnvLoading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+            </div>
           </div>
 
           {frontendMessage && (
