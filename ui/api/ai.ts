@@ -1,7 +1,7 @@
 import * as path from "path";
 import type { ApiContext } from "./context";
 import { AIService } from "../../services/aiService";
-import type { AIStreamEvent } from "../../services/aiService";
+import type { AIStreamEvent, ReviewPROptions } from "../../services/aiService";
 import { RepoService } from "../../services/repoService";
 import { handler, errorResponse } from "./helpers";
 
@@ -482,6 +482,113 @@ Important:
         ]);
 
         return Response.json({ startMd, planMd, traceMd });
+      }),
+    },
+
+    // POST /api/ai/review-pr - Start AI review for a PR
+    "/api/ai/review-pr": {
+      POST: handler(async (req: Request) => {
+        const body = await req.json();
+        const { prId, prTitle, sourceBranch, targetBranch, description, comments, linkedTicketKey } = body;
+
+        if (!prId) {
+          return errorResponse("Missing prId", 400);
+        }
+
+        // Check if AI is enabled
+        const isEnabled = await ctx.configService.isAIEnabled();
+        if (!isEnabled) {
+          return errorResponse("AI features are not enabled. Set ai.enabled: true in ~/.buddy.yaml", 400);
+        }
+
+        // Get selected repo
+        const selectedRepo = ctx.cacheService.getSelectedRepo();
+        if (!selectedRepo) {
+          return errorResponse("No repository selected. Go to Git page to select a repository.", 400);
+        }
+
+        // Create a job to track the AI session
+        const job = ctx.jobService.createJob({
+          type: "ai-review-pr",
+          target: `PR #${prId}`,
+        });
+
+        // Get services for AI
+        const { jiraService } = await ctx.getServices();
+        const aiService = new AIService(ctx.configService, jiraService);
+
+        // Start the job
+        ctx.jobService.updateJobStatus(job.id, "running");
+
+        // Create abort controller for cancellation
+        const abortController = new AbortController();
+        ctx.jobService.registerProcess(job.id, {
+          kill: () => abortController.abort(),
+        });
+
+        // Run the AI review process asynchronously
+        (async () => {
+          try {
+            await aiService.reviewPR({
+              prId: String(prId),
+              prTitle: prTitle || `PR #${prId}`,
+              sourceBranch: sourceBranch || "",
+              targetBranch: targetBranch || "",
+              description,
+              comments,
+              linkedTicketKey,
+              repoPath: selectedRepo.path,
+              signal: abortController.signal,
+              onEvent: (event: AIStreamEvent) => {
+                ctx.jobService.appendOutput(job.id, JSON.stringify(event));
+              },
+              onComplete: (sessionId: string) => {
+                ctx.jobService.unregisterProcess(job.id);
+                ctx.jobService.updateJobStatus(job.id, "completed");
+              },
+            });
+          } catch (err) {
+            ctx.jobService.appendOutput(job.id, JSON.stringify({
+              type: "error",
+              message: String(err),
+            }));
+            ctx.jobService.unregisterProcess(job.id);
+            ctx.jobService.updateJobStatus(job.id, "failed", String(err));
+          }
+        })();
+
+        return Response.json({ jobId: job.id });
+      }),
+    },
+
+    // GET /api/ai/pr-files/:prId - Read PR files (start.md, review.md)
+    "/api/ai/pr-files/:prId": {
+      GET: handler(async (req: Request & { params: { prId: string } }) => {
+        const { prId } = req.params;
+
+        const selectedRepo = ctx.cacheService.getSelectedRepo();
+        if (!selectedRepo) {
+          return errorResponse("No repository selected", 400);
+        }
+
+        const prDir = path.join(selectedRepo.path, ".claude", "prs", prId);
+
+        const readFile = async (name: string): Promise<string | null> => {
+          try {
+            const file = Bun.file(path.join(prDir, name));
+            if (await file.exists()) {
+              return await file.text();
+            }
+          } catch {}
+          return null;
+        };
+
+        const [startMd, reviewMd] = await Promise.all([
+          readFile("start.md"),
+          readFile("review.md"),
+        ]);
+
+        return Response.json({ startMd, reviewMd });
       }),
     },
 

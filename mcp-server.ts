@@ -6,6 +6,10 @@ import { JiraService } from "./services/jiraService.js";
 import { SourceControlService } from "./services/sourceControlService.js";
 import { AzureDevOpsService } from "./services/azureDevOpsService.js";
 import { ConfigService } from "./services/configService.js";
+import { RepoService } from "./services/repoService.js";
+import { NotesService } from "./services/notesService.js";
+import { InfraService } from "./services/infraService.js";
+import { JobService } from "./services/jobService.js";
 import { mcpLogger } from "./services/mcpLogger.js";
 
 const server = new McpServer({
@@ -63,7 +67,12 @@ async function getServices() {
     });
   }
 
-  return { jiraService, sourceControlService, azureDevOpsService, config, configService };
+  const repoService = new RepoService();
+  const notesService = new NotesService({ notesDir: config.ui?.notesDir });
+  const infraService = new InfraService(config.cassadol?.region);
+  const jobService = new JobService();
+
+  return { jiraService, sourceControlService, azureDevOpsService, config, configService, repoService, notesService, infraService, jobService };
 }
 
 // =============================================================================
@@ -550,7 +559,7 @@ server.registerTool(
   },
   async ({ targetBranch, title, description, isDraft = true }) => {
     try {
-      const { sourceControlService, azureDevOpsService, jiraService, config } = await getServices();
+      const { sourceControlService, azureDevOpsService, jiraService, configService } = await getServices();
 
       if (!sourceControlService) {
         return {
@@ -783,7 +792,7 @@ server.registerTool(
   },
   async ({ targetBranch, isDraft = true }) => {
     try {
-      const { sourceControlService, azureDevOpsService, jiraService, config } = await getServices();
+      const { sourceControlService, azureDevOpsService, jiraService, configService } = await getServices();
 
       if (!sourceControlService) {
         return {
@@ -878,6 +887,936 @@ server.registerTool(
             text: `✓ Created ${isDraft ? "draft " : ""}PR from ticket ${issue.key}:\n${azureDevOpsService.formatPRForDisplay(pr)}`,
           },
         ],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// =============================================================================
+// JIRA Extended Tools
+// =============================================================================
+
+server.registerTool(
+  "jira_assign_to_self",
+  {
+    description: "Assign a JIRA issue to yourself",
+    inputSchema: z.object({
+      issueKey: z.string().describe("Issue key (e.g., 'PROJ-123')"),
+    }),
+  },
+  async ({ issueKey }) => {
+    try {
+      const { jiraService } = await getServices();
+      if (!jiraService) {
+        return {
+          content: [{ type: "text", text: "JIRA is not configured. Run 'bud jira config' to set it up." }],
+          isError: true,
+        };
+      }
+
+      const result = await jiraService.assignToSelf(issueKey);
+      return {
+        content: [{ type: "text", text: `✓ Assigned ${issueKey} to ${result.displayName}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "jira_unassign",
+  {
+    description: "Unassign a JIRA issue (remove assignee)",
+    inputSchema: z.object({
+      issueKey: z.string().describe("Issue key (e.g., 'PROJ-123')"),
+    }),
+  },
+  async ({ issueKey }) => {
+    try {
+      const { jiraService } = await getServices();
+      if (!jiraService) {
+        return {
+          content: [{ type: "text", text: "JIRA is not configured. Run 'bud jira config' to set it up." }],
+          isError: true,
+        };
+      }
+
+      await jiraService.unassignIssue(issueKey);
+      return {
+        content: [{ type: "text", text: `✓ Unassigned ${issueKey}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "jira_add_comment",
+  {
+    description: "Add a comment to a JIRA issue, optionally with a link",
+    inputSchema: z.object({
+      issueKey: z.string().describe("Issue key (e.g., 'PROJ-123')"),
+      comment: z.string().describe("Comment text"),
+      linkUrl: z.string().optional().describe("Optional URL to include as a link"),
+      linkText: z.string().optional().describe("Display text for the link (default: the URL)"),
+    }),
+  },
+  async ({ issueKey, comment, linkUrl, linkText }) => {
+    try {
+      const { jiraService } = await getServices();
+      if (!jiraService) {
+        return {
+          content: [{ type: "text", text: "JIRA is not configured. Run 'bud jira config' to set it up." }],
+          isError: true,
+        };
+      }
+
+      if (linkUrl) {
+        await jiraService.addCommentWithLink(issueKey, comment, linkUrl, linkText || linkUrl);
+      } else {
+        await jiraService.addComment(issueKey, comment);
+      }
+
+      return {
+        content: [{ type: "text", text: `✓ Added comment to ${issueKey}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// =============================================================================
+// Git Extended Tools
+// =============================================================================
+
+server.registerTool(
+  "git_diff",
+  {
+    description: "Get the diff between current branch and a target branch",
+    inputSchema: z.object({
+      targetBranch: z.string().optional().describe("Target branch to diff against (default: first base branch from config)"),
+      file: z.string().optional().describe("Optional specific file path to get diff for"),
+    }),
+  },
+  async ({ targetBranch, file }) => {
+    try {
+      const { repoService, configService } = await getServices();
+
+      const baseBranches = await configService.getBaseBranches();
+      const target = targetBranch || baseBranches[0] || "master";
+      const cwd = process.cwd();
+
+      let diff: string | null;
+      if (file) {
+        diff = await repoService.getFileDiff(cwd, target, file);
+      } else {
+        diff = await repoService.getDiff(cwd, target);
+      }
+
+      if (diff === null) {
+        return {
+          content: [{ type: "text", text: `Failed to get diff against ${target}. Make sure the branch exists on remote.` }],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: diff.trim() || "No differences found." }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "git_changed_files",
+  {
+    description: "Get list of files changed between current branch and target branch with insertions/deletions",
+    inputSchema: z.object({
+      targetBranch: z.string().optional().describe("Target branch to compare against (default: first base branch from config)"),
+    }),
+  },
+  async ({ targetBranch }) => {
+    try {
+      const { repoService, configService } = await getServices();
+
+      const baseBranches = await configService.getBaseBranches();
+      const target = targetBranch || baseBranches[0] || "master";
+      const cwd = process.cwd();
+
+      const result = await repoService.getChangedFiles(cwd, target);
+
+      if (!result) {
+        return {
+          content: [{ type: "text", text: `Failed to get changed files against ${target}.` }],
+          isError: true,
+        };
+      }
+
+      const lines = result.files.map(f =>
+        `${f.status.padEnd(8)} +${f.insertions} -${f.deletions}\t${f.path}`
+      );
+      const summary = `${result.files.length} file(s) changed, +${result.totalInsertions} -${result.totalDeletions}`;
+
+      return {
+        content: [{ type: "text", text: `${lines.join("\n")}\n\n${summary}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "git_commits",
+  {
+    description: "Get commit history between current branch and target branch",
+    inputSchema: z.object({
+      targetBranch: z.string().optional().describe("Target branch to compare against (default: first base branch from config)"),
+    }),
+  },
+  async ({ targetBranch }) => {
+    try {
+      const { repoService, configService } = await getServices();
+
+      const baseBranches = await configService.getBaseBranches();
+      const target = targetBranch || baseBranches[0] || "master";
+      const cwd = process.cwd();
+
+      const commits = await repoService.getCommits(cwd, target);
+
+      if (!commits) {
+        return {
+          content: [{ type: "text", text: `Failed to get commits against ${target}.` }],
+          isError: true,
+        };
+      }
+
+      if (commits.length === 0) {
+        return {
+          content: [{ type: "text", text: `No commits ahead of ${target}.` }],
+        };
+      }
+
+      const lines = commits.map(c => `${c.shortHash} ${c.date} ${c.author}: ${c.subject}`);
+      return {
+        content: [{ type: "text", text: `${commits.length} commit(s) ahead of ${target}:\n\n${lines.join("\n")}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "git_find_ticket_branch",
+  {
+    description: "Find an existing local branch for a JIRA ticket key",
+    inputSchema: z.object({
+      ticketKey: z.string().describe("JIRA ticket key (e.g., 'CAS-123')"),
+    }),
+  },
+  async ({ ticketKey }) => {
+    try {
+      const { repoService } = await getServices();
+      const cwd = process.cwd();
+      const branch = await repoService.findBranchForTicket(cwd, ticketKey);
+
+      if (branch) {
+        return {
+          content: [{ type: "text", text: `Found branch: ${branch}` }],
+        };
+      }
+      return {
+        content: [{ type: "text", text: `No local branch found for ${ticketKey}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// =============================================================================
+// PR Extended Tools
+// =============================================================================
+
+server.registerTool(
+  "pr_get_comments",
+  {
+    description: "Get comments and review threads on a pull request",
+    inputSchema: z.object({
+      prId: z.number().optional().describe("PR ID (if not provided, finds PR for current branch)"),
+    }),
+  },
+  async ({ prId }) => {
+    try {
+      const { sourceControlService, azureDevOpsService } = await getServices();
+
+      if (!azureDevOpsService) {
+        return {
+          content: [{ type: "text", text: "Azure DevOps is not configured." }],
+          isError: true,
+        };
+      }
+
+      let resolvedPrId = prId;
+      if (!resolvedPrId) {
+        if (!sourceControlService) {
+          return {
+            content: [{ type: "text", text: "Not in a git repository and no PR ID provided." }],
+            isError: true,
+          };
+        }
+        const currentBranch = await sourceControlService.getCurrentBranch();
+        const pr = await azureDevOpsService.getCurrentBranchPR(currentBranch);
+        if (!pr) {
+          return {
+            content: [{ type: "text", text: `No PR found for branch '${currentBranch}'` }],
+            isError: true,
+          };
+        }
+        resolvedPrId = pr.pullRequestId;
+      }
+
+      const threads = await azureDevOpsService.getPRThreads(resolvedPrId);
+
+      if (threads.length === 0) {
+        return {
+          content: [{ type: "text", text: `No comments on PR #${resolvedPrId}` }],
+        };
+      }
+
+      const formatted = threads.map(thread => {
+        const file = thread.threadContext?.filePath || "(general)";
+        const line = thread.threadContext?.rightFileStart?.line;
+        const location = line ? `${file}:${line}` : file;
+        const comments = thread.comments
+          .filter(c => c.content)
+          .map(c => `  ${c.author.displayName}: ${c.content}`)
+          .join("\n");
+        return `[${thread.status}] ${location}\n${comments}`;
+      }).join("\n\n");
+
+      return {
+        content: [{ type: "text", text: `PR #${resolvedPrId} — ${threads.length} thread(s):\n\n${formatted}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "pr_update_description",
+  {
+    description: "Update the description of a pull request",
+    inputSchema: z.object({
+      prId: z.number().describe("PR ID"),
+      description: z.string().describe("New PR description (supports markdown)"),
+    }),
+  },
+  async ({ prId, description }) => {
+    try {
+      const { azureDevOpsService } = await getServices();
+
+      if (!azureDevOpsService) {
+        return {
+          content: [{ type: "text", text: "Azure DevOps is not configured." }],
+          isError: true,
+        };
+      }
+
+      const pr = await azureDevOpsService.updatePullRequestDescription(prId, description);
+      return {
+        content: [{ type: "text", text: `✓ Updated description for PR #${prId}: ${pr.title}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "pr_add_reviewer",
+  {
+    description: "Add a reviewer to a pull request (searches by name if no ID provided)",
+    inputSchema: z.object({
+      prId: z.number().describe("PR ID"),
+      reviewerName: z.string().optional().describe("Reviewer name to search for"),
+      reviewerId: z.string().optional().describe("Reviewer user ID (GUID) if known"),
+      isRequired: z.boolean().optional().describe("Whether the reviewer is required (default: false)"),
+    }),
+  },
+  async ({ prId, reviewerName, reviewerId, isRequired = false }) => {
+    try {
+      const { azureDevOpsService } = await getServices();
+
+      if (!azureDevOpsService) {
+        return {
+          content: [{ type: "text", text: "Azure DevOps is not configured." }],
+          isError: true,
+        };
+      }
+
+      let resolvedId = reviewerId;
+      if (!resolvedId && reviewerName) {
+        const users = await azureDevOpsService.searchUsers(reviewerName);
+        if (users.length === 0) {
+          return {
+            content: [{ type: "text", text: `No users found matching '${reviewerName}'` }],
+            isError: true,
+          };
+        }
+        if (users.length > 1) {
+          const list = users.map(u => `  ${u.displayName} (${u.id})`).join("\n");
+          return {
+            content: [{ type: "text", text: `Multiple users found for '${reviewerName}'. Specify reviewerId:\n${list}` }],
+            isError: true,
+          };
+        }
+        resolvedId = users[0].id;
+      }
+
+      if (!resolvedId) {
+        return {
+          content: [{ type: "text", text: "Provide either reviewerName or reviewerId." }],
+          isError: true,
+        };
+      }
+
+      const reviewer = await azureDevOpsService.addReviewer(prId, resolvedId, isRequired);
+      return {
+        content: [{ type: "text", text: `✓ Added ${reviewer.displayName} as ${isRequired ? "required" : "optional"} reviewer on PR #${prId}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "pr_search",
+  {
+    description: "Search for pull requests by status or get PRs for the current user",
+    inputSchema: z.object({
+      scope: z.enum(["mine", "to-review", "all"]).describe("'mine' = PRs I created, 'to-review' = PRs I need to review, 'all' = all active PRs"),
+    }),
+  },
+  async ({ scope }) => {
+    try {
+      const { azureDevOpsService } = await getServices();
+
+      if (!azureDevOpsService) {
+        return {
+          content: [{ type: "text", text: "Azure DevOps is not configured." }],
+          isError: true,
+        };
+      }
+
+      let prs;
+      let label: string;
+      if (scope === "mine") {
+        prs = await azureDevOpsService.getMyPullRequests();
+        label = "Your active PRs";
+      } else if (scope === "to-review") {
+        prs = await azureDevOpsService.getPRsToReview();
+        label = "PRs to review";
+      } else {
+        prs = await azureDevOpsService.getActivePullRequests();
+        label = "All active PRs";
+      }
+
+      if (prs.length === 0) {
+        return {
+          content: [{ type: "text", text: `${label}: none found` }],
+        };
+      }
+
+      const formatted = prs.map(pr => azureDevOpsService.formatPRForDisplay(pr)).join("\n\n");
+      return {
+        content: [{ type: "text", text: `${label} (${prs.length}):\n\n${formatted}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// =============================================================================
+// Dashboard Tool
+// =============================================================================
+
+server.registerTool(
+  "dashboard_get",
+  {
+    description: "Get a summary of your current work: assigned JIRA issues, your PRs, and PRs to review",
+    inputSchema: z.object({}),
+  },
+  async () => {
+    try {
+      const { jiraService, azureDevOpsService } = await getServices();
+
+      const sections: string[] = [];
+
+      // JIRA issues
+      if (jiraService) {
+        try {
+          const issues = await jiraService.getMyIssues();
+          if (issues.length > 0) {
+            const list = issues.map(i => `  ${jiraService.formatIssueForDisplay(i)}`).join("\n");
+            sections.push(`📋 Assigned Issues (${issues.length}):\n${list}`);
+          } else {
+            sections.push("📋 Assigned Issues: none");
+          }
+        } catch (e) {
+          sections.push(`📋 Assigned Issues: error fetching (${e instanceof Error ? e.message : String(e)})`);
+        }
+      }
+
+      // My PRs
+      if (azureDevOpsService) {
+        try {
+          const myPrs = await azureDevOpsService.getMyPullRequests();
+          if (myPrs.length > 0) {
+            const list = myPrs.map(pr => `  ${azureDevOpsService.formatPRForDisplay(pr)}`).join("\n");
+            sections.push(`🔀 Your PRs (${myPrs.length}):\n${list}`);
+          } else {
+            sections.push("🔀 Your PRs: none");
+          }
+        } catch (e) {
+          sections.push(`🔀 Your PRs: error fetching (${e instanceof Error ? e.message : String(e)})`);
+        }
+
+        try {
+          const toReview = await azureDevOpsService.getPRsToReview();
+          if (toReview.length > 0) {
+            const list = toReview.map(pr => `  ${azureDevOpsService.formatPRForDisplay(pr)}`).join("\n");
+            sections.push(`👀 PRs to Review (${toReview.length}):\n${list}`);
+          } else {
+            sections.push("👀 PRs to Review: none");
+          }
+        } catch (e) {
+          sections.push(`👀 PRs to Review: error fetching (${e instanceof Error ? e.message : String(e)})`);
+        }
+      }
+
+      if (sections.length === 0) {
+        return {
+          content: [{ type: "text", text: "No services configured. Set up JIRA and/or Azure DevOps." }],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: sections.join("\n\n") }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// =============================================================================
+// Notes Tools
+// =============================================================================
+
+server.registerTool(
+  "notes_list",
+  {
+    description: "List all saved notes, optionally filtered by type (ticket or pr)",
+    inputSchema: z.object({
+      type: z.enum(["ticket", "pr"]).optional().describe("Filter by note type"),
+    }),
+  },
+  async ({ type }) => {
+    try {
+      const { notesService } = await getServices();
+      const notes = await notesService.listNotes(type);
+
+      if (notes.length === 0) {
+        return {
+          content: [{ type: "text", text: type ? `No ${type} notes found.` : "No notes found." }],
+        };
+      }
+
+      const list = notes.map(n =>
+        `[${n.type}] ${n.id} (updated ${n.updatedAt.toLocaleDateString()})`
+      ).join("\n");
+
+      return {
+        content: [{ type: "text", text: `${notes.length} note(s):\n${list}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "notes_get",
+  {
+    description: "Get a saved note for a ticket or PR",
+    inputSchema: z.object({
+      type: z.enum(["ticket", "pr"]).describe("Note type"),
+      id: z.string().describe("Ticket key or PR ID"),
+    }),
+  },
+  async ({ type, id }) => {
+    try {
+      const { notesService } = await getServices();
+      const note = await notesService.getNote(type, id);
+
+      if (!note) {
+        return {
+          content: [{ type: "text", text: `No note found for ${type} ${id}` }],
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: `[${note.type}] ${note.id}\nUpdated: ${note.updatedAt.toLocaleDateString()}\n\n${note.content}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "notes_save",
+  {
+    description: "Save a note for a ticket or PR (creates or updates)",
+    inputSchema: z.object({
+      type: z.enum(["ticket", "pr"]).describe("Note type"),
+      id: z.string().describe("Ticket key or PR ID"),
+      content: z.string().describe("Markdown content for the note"),
+    }),
+  },
+  async ({ type, id, content }) => {
+    try {
+      const { notesService } = await getServices();
+      const note = await notesService.saveNote(type, id, content);
+
+      return {
+        content: [{ type: "text", text: `✓ Saved note for ${note.type} ${note.id}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// =============================================================================
+// Infrastructure Tools
+// =============================================================================
+
+server.registerTool(
+  "infra_get_environments",
+  {
+    description: "List all CloudFormation environments and their stacks",
+    inputSchema: z.object({}),
+  },
+  async () => {
+    try {
+      const { infraService } = await getServices();
+      const environments = await infraService.listEnvironments();
+
+      if (environments.length === 0) {
+        return {
+          content: [{ type: "text", text: "No CloudFormation environments found." }],
+        };
+      }
+
+      const formatted = environments.map(env => {
+        const stacks = env.stacks.map(s => `    ${s.name} [${s.status}]`).join("\n");
+        return `${env.suffix} (${env.stacks.length} stacks):\n${stacks}`;
+      }).join("\n\n");
+
+      return {
+        content: [{ type: "text", text: `${environments.length} environment(s):\n\n${formatted}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "infra_list_lambdas",
+  {
+    description: "List AWS Lambda functions deployed in your account",
+    inputSchema: z.object({
+      environment: z.string().optional().describe("Filter by environment name (e.g., 'dev', 'staging')"),
+    }),
+  },
+  async ({ environment }) => {
+    try {
+      const { infraService } = await getServices();
+      const lambdas = await infraService.listAwsLambdas(environment);
+
+      if (lambdas.length === 0) {
+        return {
+          content: [{ type: "text", text: environment ? `No Lambda functions found for environment '${environment}'.` : "No Lambda functions found." }],
+        };
+      }
+
+      const formatted = lambdas.map(l =>
+        `${l.functionName}\n  Runtime: ${l.runtime || "N/A"} | Memory: ${l.memorySize || "N/A"}MB | Timeout: ${l.timeout || "N/A"}s${l.localName ? `\n  Local handler: ${l.localName}` : ""}`
+      ).join("\n\n");
+
+      return {
+        content: [{ type: "text", text: `${lambdas.length} Lambda function(s):\n\n${formatted}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "infra_lambda_details",
+  {
+    description: "Get detailed information about a specific AWS Lambda function including environment variables",
+    inputSchema: z.object({
+      functionName: z.string().describe("AWS Lambda function name"),
+    }),
+  },
+  async ({ functionName }) => {
+    try {
+      const { infraService } = await getServices();
+      const details = await infraService.getAwsLambdaDetails(functionName);
+
+      if (!details) {
+        return {
+          content: [{ type: "text", text: `Lambda function '${functionName}' not found.` }],
+          isError: true,
+        };
+      }
+
+      const { config: cfg, envVars } = details;
+      const envVarsList = Object.entries(envVars)
+        .map(([k, v]) => `  ${k}=${v}`)
+        .join("\n");
+
+      const text = `${cfg.functionName}
+Runtime: ${cfg.runtime || "N/A"}
+Memory: ${cfg.memorySize || "N/A"}MB
+Timeout: ${cfg.timeout || "N/A"}s
+Code Size: ${cfg.codeSize ? `${(cfg.codeSize / 1024 / 1024).toFixed(1)}MB` : "N/A"}
+Last Modified: ${cfg.lastModified || "N/A"}
+Handler: ${cfg.handler || "N/A"}
+Description: ${cfg.description || "N/A"}
+Console: ${infraService.getLambdaConsoleUrl(functionName)}
+Logs: ${infraService.getLambdaLogsConsoleUrl(functionName)}
+${envVarsList ? `\nEnvironment Variables:\n${envVarsList}` : ""}`;
+
+      return {
+        content: [{ type: "text", text }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// =============================================================================
+// Job Tools
+// =============================================================================
+
+server.registerTool(
+  "job_list",
+  {
+    description: "List recent jobs (builds, deploys, tests) or active jobs only",
+    inputSchema: z.object({
+      activeOnly: z.boolean().optional().describe("Only show active/running jobs (default: false)"),
+      limit: z.number().optional().describe("Number of recent jobs to return (default: 20)"),
+    }),
+  },
+  async ({ activeOnly, limit = 20 }) => {
+    try {
+      const { jobService } = await getServices();
+
+      const jobs = activeOnly ? jobService.getActiveJobs() : jobService.getRecentJobs(limit);
+
+      if (jobs.length === 0) {
+        return {
+          content: [{ type: "text", text: activeOnly ? "No active jobs." : "No recent jobs." }],
+        };
+      }
+
+      const formatted = jobs.map(j => {
+        const duration = j.completedAt ? `${((j.completedAt - j.startedAt) / 1000).toFixed(0)}s` : "running";
+        return `[${j.status}] ${j.type}: ${j.target} (${duration})${j.error ? ` — ${j.error}` : ""}`;
+      }).join("\n");
+
+      return {
+        content: [{ type: "text", text: `${jobs.length} job(s):\n\n${formatted}` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "job_get",
+  {
+    description: "Get details and output of a specific job by ID",
+    inputSchema: z.object({
+      jobId: z.string().describe("Job ID"),
+    }),
+  },
+  async ({ jobId }) => {
+    try {
+      const { jobService } = await getServices();
+      const job = jobService.getJob(jobId);
+
+      if (!job) {
+        return {
+          content: [{ type: "text", text: `Job '${jobId}' not found.` }],
+          isError: true,
+        };
+      }
+
+      const duration = job.completedAt ? `${((job.completedAt - job.startedAt) / 1000).toFixed(0)}s` : "still running";
+      const lastOutput = job.output.slice(-50).join("\n");
+
+      const text = `Job: ${job.id}
+Type: ${job.type}
+Target: ${job.target}
+Status: ${job.status}
+Duration: ${duration}
+${job.error ? `Error: ${job.error}` : ""}
+${lastOutput ? `\nLast output:\n${lastOutput}` : ""}`;
+
+      return {
+        content: [{ type: "text", text }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// =============================================================================
+// Stats Tool
+// =============================================================================
+
+server.registerTool(
+  "stats_get",
+  {
+    description: "Get your productivity stats: tickets completed, PRs created, and PRs merged over the past 12 months",
+    inputSchema: z.object({}),
+  },
+  async () => {
+    try {
+      const { jiraService, azureDevOpsService } = await getServices();
+
+      if (!jiraService || !azureDevOpsService) {
+        return {
+          content: [{ type: "text", text: "Both JIRA and Azure DevOps must be configured for stats." }],
+          isError: true,
+        };
+      }
+
+      // Get completed tickets
+      const jql = `assignee was currentUser() AND resolution IS NOT EMPTY AND resolutiondate >= -365d ORDER BY resolutiondate DESC`;
+      let tickets: any[] = [];
+      try {
+        tickets = await jiraService.searchIssues(jql, 500);
+      } catch {
+        // Try fallback
+        try {
+          tickets = await jiraService.searchIssues(`assignee = currentUser() AND status = Done AND updated >= -365d`, 500);
+        } catch {}
+      }
+
+      // Get PRs
+      let completedPRs: any[] = [];
+      let activePRs: any[] = [];
+      try {
+        completedPRs = await azureDevOpsService.getCompletedPullRequests(365);
+        activePRs = await azureDevOpsService.getMyPullRequests();
+      } catch {}
+
+      const totalPRs = completedPRs.length + activePRs.length;
+      const mergedPRs = completedPRs.filter((pr: any) => pr.status === "completed").length;
+
+      const text = `Past 12 Months:
+  Tickets completed: ${tickets.length}
+  PRs created: ${totalPRs}
+  PRs merged: ${mergedPRs}`;
+
+      return {
+        content: [{ type: "text", text }],
       };
     } catch (error) {
       return {

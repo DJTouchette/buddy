@@ -140,6 +140,7 @@ export function AITestPage({ navigate }: AITestPageProps) {
           <AISessionPanel
             jobId={aiSessionJobId}
             ticketKey={activeTicketKey}
+            contextKey={activeTicketKey}
             onClose={() => setAiSessionJobId(null)}
           />
         )}

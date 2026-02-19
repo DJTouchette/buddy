@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { ExternalLink, GitBranch, GitMerge, User, UserPlus, UserMinus, Users, FileText, CheckCircle, Ticket, Download, Loader2, Check, X, Expand, Maximize2, Minimize2, Pencil, Save, AlertCircle, Eye } from "lucide-react";
+import { ExternalLink, GitBranch, GitMerge, User, UserPlus, UserMinus, Users, FileText, CheckCircle, Ticket, Download, Loader2, Check, X, Expand, Maximize2, Minimize2, Pencil, Save, AlertCircle, Eye, Bot } from "lucide-react";
 import { Modal } from "./Modal";
 import { NotesEditor } from "./NotesEditor";
 import { Markdown } from "./Markdown";
+import { AISessionPanel } from "./AISessionPanel";
 import type { PRWithTicket } from "../../services/linkingService";
 import {
   PRStatusBadge,
@@ -39,6 +40,11 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
   // Review action state (combines add reviewer + checkout)
   const [isReviewing, setIsReviewing] = useState(false);
 
+  // AI review state
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [startingAiReview, setStartingAiReview] = useState(false);
+  const [aiReviewJobId, setAiReviewJobId] = useState<string | null>(null);
+
   // Reset state and fetch data when PR changes
   useEffect(() => {
     if (pr) {
@@ -47,6 +53,29 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
       description.setExpanded(false);
       checkout.fetchCurrentBranch();
       statusData.fetchStatuses();
+      setAiReviewJobId(null);
+
+      // Fetch AI config
+      fetch("/api/ai/config")
+        .then(res => res.json())
+        .then(data => setAiEnabled(!!data.enabled))
+        .catch(() => {});
+
+      // Check for existing AI review job for this PR
+      fetch("/api/jobs")
+        .then(res => res.json())
+        .then(data => {
+          if (data.jobs) {
+            const target = `PR #${pr.pullRequestId}`;
+            const match = data.jobs.find((j: any) =>
+              j.type === "ai-review-pr" &&
+              j.target === target &&
+              (j.status === "running" || j.status === "pending" || j.status === "completed")
+            );
+            if (match) setAiReviewJobId(match.id);
+          }
+        })
+        .catch(() => {});
     }
   }, [pr?.pullRequestId]);
 
@@ -87,6 +116,33 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
       await checkout.handleCheckout();
     } finally {
       setIsReviewing(false);
+    }
+  };
+
+  const handleReviewWithAI = async () => {
+    if (!pr) return;
+    setStartingAiReview(true);
+    try {
+      const response = await fetch("/api/ai/review-pr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prId: pr.pullRequestId,
+          prTitle: pr.title,
+          sourceBranch,
+          targetBranch,
+          description: pr.description || "",
+          linkedTicketKey: pr.linkedTicket?.key,
+        }),
+      });
+      const data = await response.json();
+      if (data.jobId) {
+        setAiReviewJobId(data.jobId);
+      }
+    } catch (err) {
+      console.error("Failed to start AI review:", err);
+    } finally {
+      setStartingAiReview(false);
     }
   };
 
@@ -133,6 +189,21 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
                   Checkout
                 </button>
               </>
+            )}
+            {aiEnabled && !aiReviewJobId && (
+              <button
+                className="btn-secondary"
+                onClick={handleReviewWithAI}
+                disabled={startingAiReview}
+                title="Review this PR with AI"
+              >
+                {startingAiReview ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Bot className="w-4 h-4" />
+                )}
+                Review with AI
+              </button>
             )}
             {onOpenFullPage && (
               <button
@@ -365,6 +436,16 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
             <div className="text-muted">No description</div>
           )}
         </div>
+
+        {/* AI Review Session */}
+        {aiReviewJobId && (
+          <AISessionPanel
+            jobId={aiReviewJobId}
+            contextKey={String(pr.pullRequestId)}
+            contextType="pr"
+            onClose={() => setAiReviewJobId(null)}
+          />
+        )}
 
         {/* Local Notes */}
         <NotesEditor type="pr" id={String(pr.pullRequestId)} />

@@ -41,6 +41,20 @@ export interface StartWithAIOptions {
   signal?: AbortSignal;
 }
 
+export interface ReviewPROptions {
+  prId: string;
+  prTitle: string;
+  sourceBranch: string;
+  targetBranch: string;
+  description?: string;
+  comments?: string[];
+  linkedTicketKey?: string;
+  repoPath: string;
+  onEvent: (event: AIStreamEvent) => void;
+  onComplete: (sessionId: string) => void;
+  signal?: AbortSignal;
+}
+
 export class AIService {
   constructor(
     private configService: ConfigService,
@@ -405,6 +419,382 @@ Important:
               });
             }
             break;
+          }
+        }
+      }
+
+      onComplete(sessionId);
+    } catch (err: any) {
+      if (err?.name === "AbortError" || signal?.aborted) {
+        onEvent({ type: "status", message: "Session cancelled" });
+        return;
+      }
+      onEvent({ type: "error", message: `Claude SDK error: ${err?.message || err}` });
+    }
+  }
+
+  /**
+   * Build the start.md content for a PR review
+   */
+  buildPRStartMd(options: ReviewPROptions, ticketContext?: TicketContext): string {
+    let md = `# PR #${options.prId}: ${options.prTitle}\n\n`;
+
+    md += `| Field | Value |\n|-------|-------|\n`;
+    md += `| Source Branch | ${options.sourceBranch} |\n`;
+    md += `| Target Branch | ${options.targetBranch} |\n`;
+    if (options.linkedTicketKey) {
+      md += `| Linked Ticket | ${options.linkedTicketKey} |\n`;
+    }
+    md += "\n";
+
+    if (options.description) {
+      md += `## PR Description\n\n${options.description}\n\n`;
+    }
+
+    // Linked ticket details
+    if (ticketContext) {
+      const { ticket, parentTicket } = ticketContext;
+      md += `## Linked Ticket: ${ticket.key}\n\n`;
+      md += `**${ticket.fields.summary}**\n\n`;
+      md += `| Field | Value |\n|-------|-------|\n`;
+      md += `| Type | ${ticket.fields.issuetype.name} |\n`;
+      md += `| Status | ${ticket.fields.status.name} |\n`;
+      md += `| Priority | ${ticket.fields.priority?.name || "Not set"} |\n`;
+      md += "\n";
+
+      if (ticket.fields.description) {
+        const description = adfToMarkdown(ticket.fields.description);
+        md += `### Ticket Description\n\n${description}\n\n`;
+      }
+
+      const acceptanceCriteria = (ticket.fields as any).customfield_10037;
+      if (acceptanceCriteria) {
+        md += `### Acceptance Criteria\n\n`;
+        md += typeof acceptanceCriteria === "string"
+          ? acceptanceCriteria
+          : adfToMarkdown(acceptanceCriteria);
+        md += "\n\n";
+      }
+
+      if (parentTicket) {
+        md += `### Parent Ticket: ${parentTicket.key}\n\n`;
+        md += `**${parentTicket.fields.summary}**\n\n`;
+        if (parentTicket.fields.description) {
+          const parentDesc = adfToMarkdown(parentTicket.fields.description);
+          md += parentDesc + "\n\n";
+        }
+      }
+    }
+
+    if (options.comments && options.comments.length > 0) {
+      md += `## Review Comments\n\n`;
+      for (const comment of options.comments) {
+        md += `- ${comment}\n`;
+      }
+      md += "\n";
+    }
+
+    md += `## Review Instructions\n\n`;
+    md += `Review the code changes in this PR. Focus on:\n`;
+    md += `- Bugs and logic errors\n`;
+    md += `- Security issues\n`;
+    md += `- Code quality and patterns\n`;
+    md += `- Test coverage\n`;
+
+    return md;
+  }
+
+  /**
+   * Review a PR with AI using the Claude Agent SDK
+   */
+  async reviewPR(options: ReviewPROptions): Promise<void> {
+    const { prId, repoPath, onEvent, onComplete, signal } = options;
+
+    // Check if AI is enabled
+    const isEnabled = await this.configService.isAIEnabled();
+    if (!isEnabled) {
+      onEvent({ type: "error", message: "AI features are not enabled. Set ai.enabled: true in ~/.buddy.yaml" });
+      return;
+    }
+
+    onEvent({ type: "status", message: `Preparing PR #${prId} review...` });
+
+    // Fetch linked ticket context if available
+    let ticketContext: TicketContext | undefined;
+    if (options.linkedTicketKey) {
+      try {
+        onEvent({ type: "status", message: `Fetching linked ticket ${options.linkedTicketKey}...` });
+        ticketContext = await this.getTicketContext(options.linkedTicketKey);
+        onEvent({ type: "status", message: `Ticket: ${ticketContext.ticket.fields.summary}` });
+      } catch {
+        onEvent({ type: "status", message: `Could not fetch ticket ${options.linkedTicketKey}, continuing without it` });
+      }
+    }
+
+    // Create PR directory
+    const prDir = path.join(repoPath, ".claude", "prs", prId);
+    try {
+      await Bun.$`mkdir -p ${prDir}`.quiet();
+    } catch (err) {
+      onEvent({ type: "error", message: `Failed to create PR directory: ${err}` });
+      return;
+    }
+
+    // Write start.md
+    const startMdPath = path.join(prDir, "start.md");
+    try {
+      const startMdContent = this.buildPRStartMd(options, ticketContext);
+      await Bun.write(startMdPath, startMdContent);
+      onEvent({ type: "file_created", filePath: `.claude/prs/${prId}/start.md` });
+      onEvent({ type: "status", message: `Created .claude/prs/${prId}/start.md` });
+    } catch (err) {
+      onEvent({ type: "error", message: `Failed to write start.md: ${err}` });
+      return;
+    }
+
+    // Ensure the review-pr command exists in the target repo
+    const commandDir = path.join(repoPath, ".claude", "commands");
+    const commandPath = path.join(commandDir, "review-pr.md");
+    try {
+      const exists = await Bun.file(commandPath).exists();
+      if (!exists) {
+        await Bun.$`mkdir -p ${commandDir}`.quiet();
+        const sourceCommand = path.join(import.meta.dir, "..", ".claude", "commands", "review-pr.md");
+        const sourceExists = await Bun.file(sourceCommand).exists();
+        if (sourceExists) {
+          const content = await Bun.file(sourceCommand).text();
+          await Bun.write(commandPath, content);
+        } else {
+          await Bun.write(commandPath, `Read the PR context file at \`.claude/prs/$ARGUMENTS/start.md\` to understand the PR.
+
+Then follow this workflow:
+
+1. **Checkout the branch** — Switch to the source branch listed in the start file
+2. **Get the diff** — Run \`git diff <target-branch>...HEAD\` to see all changes
+3. **Analyze the changes** — Review every changed file carefully
+4. **Write the review** — Save your review to \`.claude/prs/$ARGUMENTS/review.md\`
+
+Focus your review on:
+- **Bugs**: Logic errors, off-by-one errors, null/undefined handling
+- **Security**: Injection risks, auth issues, data exposure
+- **Code quality**: Naming, structure, duplication, complexity
+- **Patterns**: Consistency with existing codebase conventions
+- **Test coverage**: Are new code paths tested?
+
+Important:
+- Do NOT make code changes — this is a review only
+- Be specific: reference file names and line numbers
+- Categorize findings by severity: critical, warning, suggestion
+- Work autonomously — do not ask questions
+`);
+        }
+        onEvent({ type: "file_created", filePath: `.claude/commands/review-pr.md` });
+      }
+    } catch {
+      // Non-fatal
+    }
+
+    onEvent({ type: "status", message: "Starting Claude Agent SDK..." });
+
+    // Create abort controller
+    const abortController = new AbortController();
+    if (signal) {
+      signal.addEventListener("abort", () => abortController.abort());
+    }
+
+    try {
+      const cleanEnv = { ...process.env };
+      delete cleanEnv.CLAUDECODE;
+
+      const q = claudeQuery({
+        prompt: `/review-pr ${prId}`,
+        options: {
+          cwd: repoPath,
+          permissionMode: "acceptEdits",
+          model: "claude-opus-4-6",
+          includePartialMessages: true,
+          settingSources: ["project"],
+          systemPrompt: { type: "preset", preset: "claude_code" },
+          tools: { type: "preset", preset: "claude_code" },
+          abortController,
+          env: cleanEnv,
+        },
+      });
+
+      let sessionId = "";
+      // Accumulate assistant text from both streaming deltas and full messages
+      const assistantTextParts: string[] = [];
+      // Track current streaming text block to avoid duplicates
+      let currentStreamingText = "";
+
+      for await (const message of q) {
+        if (signal?.aborted) break;
+
+        switch (message.type) {
+          case "system": {
+            if (message.subtype === "init") {
+              sessionId = message.session_id;
+              onEvent({ type: "session_id", sessionId });
+              onEvent({ type: "status", message: `Session started (model: ${(message as any).model})` });
+            }
+            break;
+          }
+
+          case "stream_event": {
+            const event = (message as any).event;
+            if (!event) break;
+
+            switch (event.type) {
+              case "content_block_start": {
+                const block = event.content_block;
+                if (block?.type === "tool_use") {
+                  onEvent({ type: "tool_use", toolName: block.name, toolInput: "" });
+                } else if (block?.type === "text") {
+                  currentStreamingText = "";
+                }
+                break;
+              }
+              case "content_block_delta": {
+                const delta = event.delta;
+                if (delta?.type === "text_delta" && delta.text) {
+                  currentStreamingText += delta.text;
+                  onEvent({ type: "assistant_text", text: delta.text });
+                }
+                break;
+              }
+              case "content_block_stop": {
+                if (currentStreamingText) {
+                  assistantTextParts.push(currentStreamingText);
+                  currentStreamingText = "";
+                }
+                break;
+              }
+            }
+            break;
+          }
+
+          case "assistant": {
+            // Full assistant message — only collect text if we didn't get it from streaming
+            if (message.message?.content && assistantTextParts.length === 0) {
+              for (const block of message.message.content) {
+                if (block.type === "text" && block.text) {
+                  assistantTextParts.push(block.text);
+                }
+              }
+            }
+            // Always emit tool_use events
+            if (message.message?.content) {
+              for (const block of message.message.content) {
+                if (block.type === "tool_use") {
+                  const inputStr = typeof block.input === "string"
+                    ? block.input
+                    : JSON.stringify(block.input, null, 2);
+                  onEvent({
+                    type: "tool_use",
+                    toolName: block.name,
+                    toolInput: inputStr.length > 500 ? inputStr.slice(0, 500) + "..." : inputStr,
+                  });
+                }
+              }
+            }
+            break;
+          }
+
+          case "tool_use_summary": {
+            onEvent({ type: "status", message: (message as any).summary });
+            break;
+          }
+
+          case "result": {
+            onEvent({
+              type: "result",
+              sessionId: (message as any).session_id,
+              costUsd: (message as any).total_cost_usd,
+              durationMs: (message as any).duration_ms,
+              numTurns: (message as any).num_turns,
+            });
+
+            if ((message as any).is_error) {
+              const errors = "errors" in message ? (message as any).errors : [];
+              onEvent({
+                type: "error",
+                message: `Session ended with error: ${errors.join(", ") || "unknown"}`,
+              });
+            }
+            break;
+          }
+        }
+      }
+
+      // Write review.md — try accumulated text first, fall back to reading session transcripts
+      const reviewMdPath = path.join(prDir, "review.md");
+      let reviewExists = false;
+      try { reviewExists = await Bun.file(reviewMdPath).exists(); } catch {}
+
+      if (!reviewExists) {
+        let reviewContent = "";
+
+        if (assistantTextParts.length > 0) {
+          reviewContent = assistantTextParts.join("\n\n");
+        }
+
+        // If no text captured from events, read session transcript files
+        // The SDK stores slash command output in subagent JSONL files
+        if (!reviewContent && sessionId) {
+          try {
+            const projectSlug = repoPath.replace(/\//g, "-");
+            const home = process.env.HOME || process.env.USERPROFILE || "";
+            const sessionDir = path.join(home, ".claude", "projects", projectSlug, sessionId);
+
+            // Helper to extract assistant text from a JSONL file
+            const extractText = async (filePath: string): Promise<string> => {
+              const parts: string[] = [];
+              const file = Bun.file(filePath);
+              if (!(await file.exists())) return "";
+              const text = await file.text();
+              for (const line of text.trim().split("\n")) {
+                try {
+                  const msg = JSON.parse(line);
+                  if (msg.type === "assistant" && msg.message?.content) {
+                    for (const block of msg.message.content) {
+                      if (block.type === "text" && block.text) {
+                        parts.push(block.text);
+                      }
+                    }
+                  }
+                } catch {}
+              }
+              return parts.join("\n\n");
+            };
+
+            // First try subagent files (slash commands run as subagents)
+            const subagentsDir = path.join(sessionDir, "subagents");
+            try {
+              const glob = new Bun.Glob("*.jsonl");
+              for await (const file of glob.scan(subagentsDir)) {
+                const content = await extractText(path.join(subagentsDir, file));
+                if (content.length > reviewContent.length) {
+                  reviewContent = content; // Use the longest one
+                }
+              }
+            } catch {}
+
+            // Fall back to main session JSONL
+            if (!reviewContent) {
+              const mainJsonl = path.join(home, ".claude", "projects", projectSlug, `${sessionId}.jsonl`);
+              reviewContent = await extractText(mainJsonl);
+            }
+          } catch (err) {
+            console.error("[AI Review] Error reading session transcripts:", err);
+          }
+        }
+
+        if (reviewContent.trim()) {
+          try {
+            await Bun.write(reviewMdPath, `# AI Review: PR #${prId} — ${options.prTitle}\n\n${reviewContent.trim()}`);
+            onEvent({ type: "file_created", filePath: `.claude/prs/${prId}/review.md` });
+          } catch (err) {
+            console.error("[AI Review] Error writing review.md:", err);
           }
         }
       }

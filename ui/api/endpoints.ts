@@ -248,7 +248,7 @@ export const API_ENDPOINTS: ApiEndpoint[] = [
     method: "POST",
     description: "Create and execute a new job. Deploy and build-deploy-all jobs are blocked on protected environments.",
     body: {
-      type: "string – job type: build | deploy | diff | synth | deploy-lambda | tail-logs | build-frontend | build-deploy-all | ai-fix | ai-start | ctest | playwright",
+      type: "string – job type: build | deploy | diff | synth | deploy-lambda | tail-logs | build-frontend | build-deploy-all | ai-fix | ai-start | ai-review-pr | ctest | playwright",
       target: "string – build target (e.g. lambda name, stack name, 'all', 'web', 'backend', 'frontend')",
       skipBuild: "boolean? – skip build step (deploy-lambda)",
       awsFunctionName: "string? – AWS function name (deploy-lambda)",
@@ -704,6 +704,29 @@ export const API_ENDPOINTS: ApiEndpoint[] = [
     description: "SSE stream for AI fix job output",
     params: { jobId: "string – job UUID" },
     response: "text/event-stream",
+  },
+  {
+    path: "/api/ai/review-pr",
+    method: "POST",
+    description: "Start an AI review session for a PR using the Claude Agent SDK. Checks out the branch, analyzes the diff, and writes a review.",
+    body: {
+      prId: "string – PR ID",
+      prTitle: "string? – PR title",
+      sourceBranch: "string? – source branch name",
+      targetBranch: "string? – target branch name",
+      description: "string? – PR description",
+      comments: "string[]? – existing review comments",
+      linkedTicketKey: "string? – linked Jira ticket key",
+    },
+    examples: [
+      { title: "Review a PR with AI", request: "POST /api/ai/review-pr\n{\"prId\": \"123\", \"prTitle\": \"Fix login bug\", \"sourceBranch\": \"feature/fix-login\", \"targetBranch\": \"master\"}" },
+    ],
+  },
+  {
+    path: "/api/ai/pr-files/:prId",
+    method: "GET",
+    description: "Read PR-related AI files (start.md, review.md)",
+    params: { prId: "string – PR ID" },
   },
 
   // ── AppSync ──

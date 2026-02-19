@@ -10,13 +10,15 @@ interface TranscriptBlock {
 
 interface AISessionPanelProps {
   jobId: string;
-  ticketKey: string;
+  ticketKey?: string;
+  contextKey: string;
+  contextType?: "ticket" | "pr";
   onClose: () => void;
 }
 
-type TabName = "conversation" | "plan" | "trace" | "start";
+type TabName = "conversation" | "plan" | "trace" | "start" | "review";
 
-export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProps) {
+export function AISessionPanel({ jobId, ticketKey, contextKey, contextType = "ticket", onClose }: AISessionPanelProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(true);
   const [jobStatus, setJobStatus] = useState<string>("running");
@@ -30,7 +32,8 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
     startMd: string | null;
     planMd: string | null;
     traceMd: string | null;
-  }>({ startMd: null, planMd: null, traceMd: null });
+    reviewMd: string | null;
+  }>({ startMd: null, planMd: null, traceMd: null, reviewMd: null });
 
   const outputRef = useRef<HTMLDivElement>(null);
 
@@ -116,22 +119,34 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
     }
   }, []);
 
-  // Poll ticket files while running
+  // Poll context files while running, and once more after completion
   useEffect(() => {
     const fetchFiles = async () => {
       try {
-        const res = await fetch(`/api/ai/ticket-files/${ticketKey}`);
+        const endpoint = contextType === "pr"
+          ? `/api/ai/pr-files/${contextKey}`
+          : `/api/ai/ticket-files/${contextKey}`;
+        const res = await fetch(endpoint);
         const data = await res.json();
-        setTicketFiles(data);
+        setTicketFiles({
+          startMd: data.startMd || null,
+          planMd: data.planMd || null,
+          traceMd: data.traceMd || null,
+          reviewMd: data.reviewMd || null,
+        });
       } catch {}
     };
 
-    fetchFiles();
     if (isRunning) {
+      fetchFiles();
       const interval = setInterval(fetchFiles, 5000);
       return () => clearInterval(interval);
+    } else {
+      // Session just finished — delay slightly so files are flushed to disk
+      const timeout = setTimeout(fetchFiles, 1000);
+      return () => clearTimeout(timeout);
     }
-  }, [ticketKey, isRunning]);
+  }, [contextKey, contextType, isRunning]);
 
   // Copy session ID
   const handleCopy = useCallback(() => {
@@ -164,6 +179,7 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
       case "plan": return ticketFiles.planMd;
       case "trace": return ticketFiles.traceMd;
       case "start": return ticketFiles.startMd;
+      case "review": return ticketFiles.reviewMd;
       default: return null;
     }
   };
@@ -182,7 +198,7 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
           ) : (
             <XCircle className="w-4 h-4 status-error" />
           )}
-          <span>AI Session: {ticketKey}</span>
+          <span>AI Session: {contextType === "pr" ? `PR #${contextKey}` : contextKey}</span>
           {isDone && (
             <span className={`badge ${isSuccess ? "badge-green" : "badge-red"}`}>
               {jobStatus}
@@ -219,28 +235,41 @@ export function AISessionPanel({ jobId, ticketKey, onClose }: AISessionPanelProp
           Conversation
           {isRunning && <Loader2 className="w-3 h-3 animate-spin" />}
         </button>
-        <button
-          className={`ai-session-tab ${activeTab === "plan" ? "active" : ""}`}
-          onClick={() => setActiveTab("plan")}
-          disabled={!ticketFiles.planMd}
-        >
-          Plan
-          {ticketFiles.planMd && <span className="ai-tab-dot" />}
-        </button>
-        <button
-          className={`ai-session-tab ${activeTab === "trace" ? "active" : ""}`}
-          onClick={() => setActiveTab("trace")}
-          disabled={!ticketFiles.traceMd}
-        >
-          Trace
-          {ticketFiles.traceMd && <span className="ai-tab-dot" />}
-        </button>
+        {contextType === "pr" ? (
+          <button
+            className={`ai-session-tab ${activeTab === "review" ? "active" : ""}`}
+            onClick={() => setActiveTab("review")}
+            disabled={!ticketFiles.reviewMd}
+          >
+            Review
+            {ticketFiles.reviewMd && <span className="ai-tab-dot" />}
+          </button>
+        ) : (
+          <>
+            <button
+              className={`ai-session-tab ${activeTab === "plan" ? "active" : ""}`}
+              onClick={() => setActiveTab("plan")}
+              disabled={!ticketFiles.planMd}
+            >
+              Plan
+              {ticketFiles.planMd && <span className="ai-tab-dot" />}
+            </button>
+            <button
+              className={`ai-session-tab ${activeTab === "trace" ? "active" : ""}`}
+              onClick={() => setActiveTab("trace")}
+              disabled={!ticketFiles.traceMd}
+            >
+              Trace
+              {ticketFiles.traceMd && <span className="ai-tab-dot" />}
+            </button>
+          </>
+        )}
         <button
           className={`ai-session-tab ${activeTab === "start" ? "active" : ""}`}
           onClick={() => setActiveTab("start")}
           disabled={!ticketFiles.startMd}
         >
-          Start
+          Context
         </button>
       </div>
 

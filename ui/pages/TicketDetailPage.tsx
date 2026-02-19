@@ -301,6 +301,22 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
         setAiEnabled(data.enabled && data.claudeAvailable);
       })
       .catch(() => setAiEnabled(false));
+
+    // Check for existing AI session job for this ticket
+    setAiSessionJobId(null);
+    fetch("/api/jobs")
+      .then(res => res.json())
+      .then(data => {
+        if (data.jobs) {
+          const match = data.jobs.find((j: any) =>
+            (j.type === "ai-start" || j.type === "ai-fix") &&
+            j.target === ticketKey &&
+            (j.status === "running" || j.status === "pending" || j.status === "completed")
+          );
+          if (match) setAiSessionJobId(match.id);
+        }
+      })
+      .catch(() => {});
   }, [ticketKey, fetchTicket]);
 
   // Check for existing branch when ticket loads
@@ -887,6 +903,7 @@ export function TicketDetailPage({ ticketKey, navigate }: TicketDetailPageProps)
           <AISessionPanel
             jobId={aiSessionJobId}
             ticketKey={ticket.key}
+            contextKey={ticket.key}
             onClose={() => setAiSessionJobId(null)}
           />
         )}

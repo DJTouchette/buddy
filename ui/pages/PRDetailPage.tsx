@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { ArrowLeft, ExternalLink, GitBranch, GitMerge, User, UserPlus, UserMinus, Users, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X, Maximize2, Minimize2, Pencil, Save, AlertCircle, MessageSquare, Code, ThumbsUp, ThumbsDown, MinusCircle, Eye } from "lucide-react";
+import { ArrowLeft, ExternalLink, GitBranch, GitMerge, User, UserPlus, UserMinus, Users, FileText, CheckCircle, XCircle, Clock, Ticket, Download, Loader2, Check, X, Maximize2, Minimize2, Pencil, Save, AlertCircle, MessageSquare, Code, ThumbsUp, ThumbsDown, MinusCircle, Eye, Bot } from "lucide-react";
 import { NotesEditor } from "../components/NotesEditor";
 import { Markdown } from "../components/Markdown";
+import { AISessionPanel } from "../components/AISessionPanel";
 import type { PRWithTicket } from "../../services/linkingService";
 import type { PRReviewer } from "../../services/azureDevOpsService";
 
@@ -189,6 +190,11 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
   const [isRemovingReviewer, setIsRemovingReviewer] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
 
+  // AI review state
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [startingAiReview, setStartingAiReview] = useState(false);
+  const [aiReviewJobId, setAiReviewJobId] = useState<string | null>(null);
+
   const fetchPR = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -218,6 +224,31 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
       .then(data => {
         if (data.branch) {
           setCurrentBranch(data.branch);
+        }
+      })
+      .catch(() => {});
+
+    // Fetch AI config
+    fetch("/api/ai/config")
+      .then(res => res.json())
+      .then(data => {
+        setAiEnabled(!!data.enabled);
+      })
+      .catch(() => {});
+
+    // Check for existing AI review job for this PR
+    setAiReviewJobId(null);
+    fetch("/api/jobs")
+      .then(res => res.json())
+      .then(data => {
+        if (data.jobs) {
+          const target = `PR #${prId}`;
+          const match = data.jobs.find((j: any) =>
+            j.type === "ai-review-pr" &&
+            j.target === target &&
+            (j.status === "running" || j.status === "pending" || j.status === "completed")
+          );
+          if (match) setAiReviewJobId(match.id);
         }
       })
       .catch(() => {});
@@ -441,6 +472,36 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
     }
   };
 
+  const handleReviewWithAI = async () => {
+    if (!pr) return;
+    setStartingAiReview(true);
+    try {
+      const response = await fetch("/api/ai/review-pr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prId: pr.pullRequestId,
+          prTitle: pr.title,
+          sourceBranch: pr.sourceRefName.replace("refs/heads/", ""),
+          targetBranch: pr.targetRefName.replace("refs/heads/", ""),
+          description: pr.description || "",
+          comments: comments
+            .flatMap(t => t.comments.map(c => c.content))
+            .filter(Boolean),
+          linkedTicketKey: pr.linkedTicket?.key,
+        }),
+      });
+      const data = await response.json();
+      if (data.jobId) {
+        setAiReviewJobId(data.jobId);
+      }
+    } catch (err) {
+      console.error("Failed to start AI review:", err);
+    } finally {
+      setStartingAiReview(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="text-center py-8 text-muted">
@@ -519,6 +580,21 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
                   Checkout
                 </button>
               </>
+            )}
+            {aiEnabled && !aiReviewJobId && (
+              <button
+                className="btn-secondary"
+                onClick={handleReviewWithAI}
+                disabled={startingAiReview}
+                title="Review this PR with AI"
+              >
+                {startingAiReview ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Bot className="w-4 h-4" />
+                )}
+                Review with AI
+              </button>
             )}
             <a href={pr.webUrl} target="_blank" rel="noopener noreferrer" className="btn-link">
               Open in Azure DevOps <ExternalLink className="w-4 h-4" />
@@ -854,6 +930,16 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
             <div className="text-muted">No comments yet</div>
           )}
         </div>
+
+        {/* AI Review Session */}
+        {aiReviewJobId && (
+          <AISessionPanel
+            jobId={aiReviewJobId}
+            contextKey={String(pr.pullRequestId)}
+            contextType="pr"
+            onClose={() => setAiReviewJobId(null)}
+          />
+        )}
 
         {/* Local Notes */}
         <NotesEditor type="pr" id={String(pr.pullRequestId)} />

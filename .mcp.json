@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "buddy": {
+      "command": "bun",
+      "args": ["mcp-server.ts"],
+      "cwd": "/home/djtouchette/work/buddy"
+    }
+  }
+}
