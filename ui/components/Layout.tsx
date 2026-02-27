@@ -42,6 +42,7 @@ export function Layout({ children, currentPath, navigate }: LayoutProps) {
 
   const navItems = [
     { path: "/dashboard", label: "Dashboard" },
+    { path: "/activity", label: "Activity" },
     { path: "/tickets", label: "Tickets" },
     { path: "/prs", label: "PRs" },
     { path: "/git", label: "Git" },
@@ -49,7 +50,6 @@ export function Layout({ children, currentPath, navigate }: LayoutProps) {
     { path: "/appsync", label: "AppSync" },
     { path: "/jobs", label: "Jobs" },
     { path: "/tests", label: "Tests" },
-    { path: "/ai-docs", label: "AI" },
   ];
 
   const isActive = (path: string) => {

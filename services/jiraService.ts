@@ -68,6 +68,23 @@ export interface JiraTransition {
   };
 }
 
+export interface JiraChangelogEntry {
+  id: string;
+  created: string;
+  author: string;
+  field: string;
+  fromString: string | null;
+  toString: string | null;
+  issueSummary: string;
+}
+
+export interface JiraComment {
+  id: string;
+  created: string;
+  author: string;
+  body: any; // ADF format
+}
+
 export interface JiraServiceOptions {
   host: string;
   email: string;
@@ -458,6 +475,60 @@ export class JiraService {
         },
       }),
     });
+  }
+
+  async getIssueChangelog(issueKey: string): Promise<JiraChangelogEntry[]> {
+    const data = await this.request<{
+      fields: { summary: string };
+      changelog: {
+        histories: Array<{
+          id: string;
+          created: string;
+          author: { displayName: string };
+          items: Array<{
+            field: string;
+            fromString: string | null;
+            toString: string | null;
+          }>;
+        }>;
+      };
+    }>(`/issue/${issueKey}?expand=changelog&fields=summary`);
+
+    const entries: JiraChangelogEntry[] = [];
+    for (const history of data.changelog.histories) {
+      for (const item of history.items) {
+        if (item.field === "status") {
+          entries.push({
+            id: history.id,
+            created: history.created,
+            author: history.author.displayName,
+            field: item.field,
+            fromString: item.fromString,
+            toString: item.toString,
+            issueSummary: data.fields.summary,
+          });
+        }
+      }
+    }
+    return entries;
+  }
+
+  async getIssueComments(issueKey: string): Promise<JiraComment[]> {
+    const data = await this.request<{
+      comments: Array<{
+        id: string;
+        created: string;
+        author: { displayName: string };
+        body: any; // ADF format
+      }>;
+    }>(`/issue/${issueKey}/comment?orderBy=-created&maxResults=20`);
+
+    return data.comments.map((c) => ({
+      id: c.id,
+      created: c.created,
+      author: c.author.displayName,
+      body: c.body,
+    }));
   }
 
   formatIssueForDisplay(issue: JiraIssue): string {

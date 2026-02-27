@@ -276,6 +276,7 @@ export async function startUIServer(port: number) {
       "/": index,
       "/dashboard": index,
       "/stats": index,
+      "/activity": index,
       "/tickets": index,
       "/tickets/*": index,  // Detail pages like /tickets/PROJ-123
       "/prs": index,

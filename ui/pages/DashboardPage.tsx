@@ -19,6 +19,7 @@ import {
   Users,
   AlertTriangle,
   BarChart3,
+  Clock as ClockIcon,
 } from "lucide-react";
 import type { JiraIssue } from "../../services/jiraService";
 
@@ -385,6 +386,13 @@ export function DashboardPage({ navigate }: DashboardPageProps) {
           )}
         </div>
         <div className="dashboard-header-actions">
+          <button
+            className="btn-secondary"
+            onClick={() => navigate("/activity")}
+          >
+            <ClockIcon className="w-4 h-4" />
+            Activity
+          </button>
           <button
             className="btn-secondary"
             onClick={() => navigate("/stats")}

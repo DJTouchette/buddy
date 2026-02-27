@@ -405,7 +405,7 @@ export class AzureDevOpsService {
   async getBuilds(repositoryId?: string, top: number = 10): Promise<Build[]> {
     const repoId = repositoryId || this.repositoryId;
     const response = await this.request<{ value: Build[] }>(
-      `/build/builds?repositoryId=${repoId}&$top=${top}&api-version=7.0`
+      `/build/builds?repositoryId=${repoId}&repositoryType=TfsGit&$top=${top}&api-version=7.0`
     );
     return response.value;
   }

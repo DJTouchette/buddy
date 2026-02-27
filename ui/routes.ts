@@ -14,6 +14,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { TestsPage } from "./pages/TestsPage";
 import { DocsPage } from "./pages/DocsPage";
 import { AITestPage } from "./pages/AITestPage";
+import { ActivityPage } from "./pages/ActivityPage";
 
 interface Route {
   path: string;
@@ -26,6 +27,7 @@ const routes: Route[] = [
   { path: "/", component: DashboardPage },
   { path: "/dashboard", component: DashboardPage },
   { path: "/stats", component: StatsPage },
+  { path: "/activity", component: ActivityPage },
   { path: "/tickets", component: TicketsPage },
   { path: "/tickets/:key", component: TicketDetailPage, paramPattern: /^\/tickets\/([A-Z]+-\d+)$/i, paramName: "ticketKey" },
   { path: "/prs", component: PRsPage },

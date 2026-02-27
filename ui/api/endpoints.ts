@@ -496,6 +496,28 @@ export const API_ENDPOINTS: ApiEndpoint[] = [
     description: "Get stats cache status and TTL",
   },
 
+  // ── Activity ──
+  {
+    path: "/api/activity",
+    method: "GET",
+    description: "Get a unified activity feed of events from JIRA, Azure DevOps, and local jobs, sorted by timestamp descending",
+    queryParams: {
+      refresh: "boolean – force refresh bypassing cache",
+      type: "string – comma-separated event types to filter (e.g. pr_comment,build_completed)",
+      limit: "number – max events to return (default: 50)",
+    },
+    examples: [
+      { title: "Get all activity", request: "GET /api/activity" },
+      { title: "Force refresh", request: "GET /api/activity?refresh=true" },
+      { title: "Filter by type", request: "GET /api/activity?type=pr_comment,ticket_comment" },
+    ],
+  },
+  {
+    path: "/api/activity/cache-info",
+    method: "GET",
+    description: "Get activity feed cache status and TTL",
+  },
+
   // ── JIRA ──
   {
     path: "/api/jira/search",
