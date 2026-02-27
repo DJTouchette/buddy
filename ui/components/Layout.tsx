@@ -43,7 +43,7 @@ export function Layout({ children, currentPath, navigate }: LayoutProps) {
   const navItems = [
     { path: "/dashboard", label: "Dashboard" },
     { path: "/tickets", label: "Tickets" },
-    { path: "/prs", label: "Pull Requests" },
+    { path: "/prs", label: "PRs" },
     { path: "/git", label: "Git" },
     { path: "/infra", label: "Infrastructure" },
     { path: "/appsync", label: "AppSync" },

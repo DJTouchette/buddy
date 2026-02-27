@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { X, Copy, Terminal, StopCircle, Loader2, CheckCircle, XCircle, ArrowDown } from "lucide-react";
+import { X, Copy, Terminal, StopCircle, Loader2, CheckCircle, XCircle, ArrowDown, Maximize2 } from "lucide-react";
 import { Markdown } from "./Markdown";
 
 interface TranscriptBlock {
@@ -22,6 +22,7 @@ export function AISessionPanel({ jobId, ticketKey, contextKey, contextType = "ti
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(true);
   const [jobStatus, setJobStatus] = useState<string>("running");
+  const [modalOpen, setModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabName>("conversation");
   const [autoScroll, setAutoScroll] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -186,11 +187,27 @@ export function AISessionPanel({ jobId, ticketKey, contextKey, contextType = "ti
 
   const fileContent = getFileContent();
 
+  // Close modal on Escape key
+  useEffect(() => {
+    if (!modalOpen) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setModalOpen(false);
+    };
+    document.addEventListener("keydown", handleEscape);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", handleEscape);
+      document.body.style.overflow = "";
+    };
+  }, [modalOpen]);
+
+  const label = contextType === "pr" ? `PR #${contextKey}` : contextKey;
+
   return (
-    <div className="ai-session-panel">
-      {/* Header */}
-      <div className="ai-session-header">
-        <div className="ai-session-title">
+    <>
+      {/* Inline status bar */}
+      <div className="ai-session-bar" onClick={() => setModalOpen(true)}>
+        <div className="ai-session-bar-left">
           {isRunning ? (
             <Loader2 className="w-4 h-4 animate-spin" />
           ) : isSuccess ? (
@@ -198,130 +215,165 @@ export function AISessionPanel({ jobId, ticketKey, contextKey, contextType = "ti
           ) : (
             <XCircle className="w-4 h-4 status-error" />
           )}
-          <span>AI Session: {contextType === "pr" ? `PR #${contextKey}` : contextKey}</span>
+          <span>AI Review: {label}</span>
           {isDone && (
             <span className={`badge ${isSuccess ? "badge-green" : "badge-red"}`}>
               {jobStatus}
             </span>
           )}
+          {isRunning && <span className="text-muted text-sm">Running...</span>}
         </div>
-        <button className="btn-icon-sm" onClick={onClose} title="Close panel">
-          <X className="w-4 h-4" />
-        </button>
+        <div className="ai-session-bar-right">
+          <button className="btn-icon-sm" onClick={(e) => { e.stopPropagation(); setModalOpen(true); }} title="Open details">
+            <Maximize2 className="w-4 h-4" />
+          </button>
+          <button className="btn-icon-sm" onClick={(e) => { e.stopPropagation(); onClose(); }} title="Dismiss">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
-      {/* Session ID bar */}
-      {sessionId && (
-        <div className="ai-session-id">
-          <span className="ai-session-id-label">Session:</span>
-          <code className="ai-session-id-value">{sessionId}</code>
-          <button className="btn-sm btn-secondary" onClick={handleCopy} title="Copy session ID">
-            <Copy className="w-3 h-3" />
-            {copied ? "Copied" : "Copy"}
-          </button>
-          <button className="btn-sm btn-secondary" onClick={handleCopyResume} title="Copy resume command">
-            <Terminal className="w-3 h-3" />
-            Resume
-          </button>
-        </div>
-      )}
-
-      {/* Tabs */}
-      <div className="ai-session-tabs">
-        <button
-          className={`ai-session-tab ${activeTab === "conversation" ? "active" : ""}`}
-          onClick={() => setActiveTab("conversation")}
-        >
-          Conversation
-          {isRunning && <Loader2 className="w-3 h-3 animate-spin" />}
-        </button>
-        {contextType === "pr" ? (
-          <button
-            className={`ai-session-tab ${activeTab === "review" ? "active" : ""}`}
-            onClick={() => setActiveTab("review")}
-            disabled={!ticketFiles.reviewMd}
-          >
-            Review
-            {ticketFiles.reviewMd && <span className="ai-tab-dot" />}
-          </button>
-        ) : (
-          <>
-            <button
-              className={`ai-session-tab ${activeTab === "plan" ? "active" : ""}`}
-              onClick={() => setActiveTab("plan")}
-              disabled={!ticketFiles.planMd}
-            >
-              Plan
-              {ticketFiles.planMd && <span className="ai-tab-dot" />}
-            </button>
-            <button
-              className={`ai-session-tab ${activeTab === "trace" ? "active" : ""}`}
-              onClick={() => setActiveTab("trace")}
-              disabled={!ticketFiles.traceMd}
-            >
-              Trace
-              {ticketFiles.traceMd && <span className="ai-tab-dot" />}
-            </button>
-          </>
-        )}
-        <button
-          className={`ai-session-tab ${activeTab === "start" ? "active" : ""}`}
-          onClick={() => setActiveTab("start")}
-          disabled={!ticketFiles.startMd}
-        >
-          Context
-        </button>
-      </div>
-
-      {/* Content area */}
-      {activeTab === "conversation" ? (
-        <div className="ai-session-output" ref={outputRef} onScroll={handleScroll}>
-          {transcript.length === 0 && isRunning && (
-            <div className="ai-event ai-event-status">Waiting for session to start...</div>
-          )}
-          {transcript.map((block, i) => (
-            <TranscriptBlockView key={i} block={block} />
-          ))}
-          {isRunning && <div className="job-output-cursor">_</div>}
-        </div>
-      ) : (
-        <div className="ai-session-output ai-session-file-view">
-          {fileContent ? (
-            <Markdown content={fileContent} />
-          ) : (
-            <div className="text-muted text-center py-4">
-              {isRunning ? "Waiting for Claude to create this file..." : "File not created"}
+      {/* Modal */}
+      {modalOpen && (
+        <div className="ai-session-overlay" onClick={() => setModalOpen(false)}>
+          <div className="ai-session-modal" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="ai-session-header">
+              <div className="ai-session-title">
+                {isRunning ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : isSuccess ? (
+                  <CheckCircle className="w-4 h-4 status-success" />
+                ) : (
+                  <XCircle className="w-4 h-4 status-error" />
+                )}
+                <span>AI Session: {label}</span>
+                {isDone && (
+                  <span className={`badge ${isSuccess ? "badge-green" : "badge-red"}`}>
+                    {jobStatus}
+                  </span>
+                )}
+              </div>
+              <button className="btn-icon-sm" onClick={() => setModalOpen(false)} title="Close">
+                <X className="w-4 h-4" />
+              </button>
             </div>
-          )}
+
+            {/* Session ID bar */}
+            {sessionId && (
+              <div className="ai-session-id">
+                <span className="ai-session-id-label">Session:</span>
+                <code className="ai-session-id-value">{sessionId}</code>
+                <button className="btn-sm btn-secondary" onClick={handleCopy} title="Copy session ID">
+                  <Copy className="w-3 h-3" />
+                  {copied ? "Copied" : "Copy"}
+                </button>
+                <button className="btn-sm btn-secondary" onClick={handleCopyResume} title="Copy resume command">
+                  <Terminal className="w-3 h-3" />
+                  Resume
+                </button>
+              </div>
+            )}
+
+            {/* Tabs */}
+            <div className="ai-session-tabs">
+              <button
+                className={`ai-session-tab ${activeTab === "conversation" ? "active" : ""}`}
+                onClick={() => setActiveTab("conversation")}
+              >
+                Conversation
+                {isRunning && <Loader2 className="w-3 h-3 animate-spin" />}
+              </button>
+              {contextType === "pr" ? (
+                <button
+                  className={`ai-session-tab ${activeTab === "review" ? "active" : ""}`}
+                  onClick={() => setActiveTab("review")}
+                  disabled={!ticketFiles.reviewMd}
+                >
+                  Review
+                  {ticketFiles.reviewMd && <span className="ai-tab-dot" />}
+                </button>
+              ) : (
+                <>
+                  <button
+                    className={`ai-session-tab ${activeTab === "plan" ? "active" : ""}`}
+                    onClick={() => setActiveTab("plan")}
+                    disabled={!ticketFiles.planMd}
+                  >
+                    Plan
+                    {ticketFiles.planMd && <span className="ai-tab-dot" />}
+                  </button>
+                  <button
+                    className={`ai-session-tab ${activeTab === "trace" ? "active" : ""}`}
+                    onClick={() => setActiveTab("trace")}
+                    disabled={!ticketFiles.traceMd}
+                  >
+                    Trace
+                    {ticketFiles.traceMd && <span className="ai-tab-dot" />}
+                  </button>
+                </>
+              )}
+              <button
+                className={`ai-session-tab ${activeTab === "start" ? "active" : ""}`}
+                onClick={() => setActiveTab("start")}
+                disabled={!ticketFiles.startMd}
+              >
+                Context
+              </button>
+            </div>
+
+            {/* Content area */}
+            {activeTab === "conversation" ? (
+              <div className="ai-session-output" ref={outputRef} onScroll={handleScroll}>
+                {transcript.length === 0 && isRunning && (
+                  <div className="ai-event ai-event-status">Waiting for session to start...</div>
+                )}
+                {transcript.map((block, i) => (
+                  <TranscriptBlockView key={i} block={block} />
+                ))}
+                {isRunning && <div className="job-output-cursor">_</div>}
+              </div>
+            ) : (
+              <div className="ai-session-output ai-session-file-view">
+                {fileContent ? (
+                  <Markdown content={fileContent} />
+                ) : (
+                  <div className="text-muted text-center py-4">
+                    {isRunning ? "Waiting for Claude to create this file..." : "File not created"}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Jump to bottom */}
+            {activeTab === "conversation" && !autoScroll && (
+              <button className="job-output-jump-bottom" onClick={scrollToBottom} title="Jump to bottom">
+                <ArrowDown className="w-4 h-4" />
+                Jump to bottom
+              </button>
+            )}
+
+            {/* Footer */}
+            <div className="ai-session-footer">
+              <div className="ai-session-stats">
+                {resultInfo && (
+                  <>
+                    <span>Duration: {Math.round((resultInfo.durationMs || 0) / 1000)}s</span>
+                    <span>Turns: {resultInfo.numTurns}</span>
+                  </>
+                )}
+              </div>
+              {isRunning && (
+                <button className="btn-sm btn-danger" onClick={handleCancel}>
+                  <StopCircle className="w-3 h-3" />
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
-
-      {/* Jump to bottom */}
-      {activeTab === "conversation" && !autoScroll && (
-        <button className="job-output-jump-bottom" onClick={scrollToBottom} title="Jump to bottom">
-          <ArrowDown className="w-4 h-4" />
-          Jump to bottom
-        </button>
-      )}
-
-      {/* Footer */}
-      <div className="ai-session-footer">
-        <div className="ai-session-stats">
-          {resultInfo && (
-            <>
-              <span>Duration: {Math.round((resultInfo.durationMs || 0) / 1000)}s</span>
-              <span>Turns: {resultInfo.numTurns}</span>
-            </>
-          )}
-        </div>
-        {isRunning && (
-          <button className="btn-sm btn-danger" onClick={handleCancel}>
-            <StopCircle className="w-3 h-3" />
-            Cancel
-          </button>
-        )}
-      </div>
-    </div>
+    </>
   );
 }
 
