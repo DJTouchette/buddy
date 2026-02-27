@@ -547,58 +547,59 @@ export function PRDetailPage({ prId, navigate }: PRDetailPageProps) {
       </div>
 
       <div className="pr-detail">
-        {/* Header with title */}
+        {/* Header with title + actions */}
         <div className="detail-header">
           <h3 className="detail-summary">{pr.title}</h3>
           <div className="detail-header-actions">
-            {!isCheckedOut && (
-              <>
-                <button
-                  className="btn-secondary btn-review"
-                  onClick={handleReview}
-                  disabled={isReviewing || checkoutLoading}
-                  title="Add yourself as reviewer and checkout branch"
-                >
-                  {isReviewing ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Eye className="w-4 h-4" />
-                  )}
-                  Review
-                </button>
-                <button
-                  className="btn-secondary"
-                  onClick={handleCheckout}
-                  disabled={checkoutLoading || isReviewing}
-                  title="Checkout this PR branch"
-                >
-                  {checkoutLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Download className="w-4 h-4" />
-                  )}
-                  Checkout
-                </button>
-              </>
-            )}
-            {aiEnabled && !aiReviewJobId && (
+          {!isCheckedOut && (
+            <>
               <button
-                className="btn-secondary"
-                onClick={handleReviewWithAI}
-                disabled={startingAiReview}
-                title="Review this PR with AI"
+                className="btn-secondary btn-review"
+                onClick={handleReview}
+                disabled={isReviewing || checkoutLoading}
+                title="Add yourself as reviewer and checkout branch"
               >
-                {startingAiReview ? (
+                {isReviewing ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
-                  <Bot className="w-4 h-4" />
+                  <Eye className="w-4 h-4" />
                 )}
-                Review with AI
+                Review
               </button>
-            )}
-            <a href={pr.webUrl} target="_blank" rel="noopener noreferrer" className="btn-link">
-              Open in Azure DevOps <ExternalLink className="w-4 h-4" />
-            </a>
+              <button
+                className="btn-secondary"
+                onClick={handleCheckout}
+                disabled={checkoutLoading || isReviewing}
+                title="Checkout this PR branch"
+              >
+                {checkoutLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4" />
+                )}
+                Checkout
+              </button>
+            </>
+          )}
+          {aiEnabled && !aiReviewJobId && (
+            <button
+              className="btn-secondary"
+              onClick={handleReviewWithAI}
+              disabled={startingAiReview}
+              title="Review this PR with AI"
+            >
+              {startingAiReview ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Bot className="w-4 h-4" />
+              )}
+              AI Review
+            </button>
+          )}
+          <a href={pr.webUrl} target="_blank" rel="noopener noreferrer" className="btn-link" title="Open in Azure DevOps">
+            <ExternalLink className="w-4 h-4" />
+            Azure DevOps
+          </a>
           </div>
         </div>
 

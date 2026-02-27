@@ -651,9 +651,8 @@ a:hover {
 
 .detail-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
 .detail-summary {
@@ -2946,8 +2945,8 @@ a:hover {
 .detail-header-actions {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  flex-shrink: 0;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .checkout-button-wrapper {
