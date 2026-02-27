@@ -202,7 +202,7 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
                 ) : (
                   <Bot className="w-4 h-4" />
                 )}
-                Review with AI
+                AI Review
               </button>
             )}
             {onOpenFullPage && (
@@ -215,8 +215,9 @@ export function PRDetailModal({ pr, jiraHost, onClose, onTicketClick, onOpenFull
                 Full Page
               </button>
             )}
-            <a href={pr.webUrl} target="_blank" rel="noopener noreferrer" className="btn-link">
-              Open in Azure DevOps <ExternalLink className="w-4 h-4" />
+            <a href={pr.webUrl} target="_blank" rel="noopener noreferrer" className="btn-link" title="Open in Azure DevOps">
+              <ExternalLink className="w-4 h-4" />
+              Azure DevOps
             </a>
           </div>
         </div>

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from "react";
-import { RefreshCw, Search, X, Filter } from "lucide-react";
+import { RefreshCw, Search, X, Filter, Zap } from "lucide-react";
 import { useApi } from "../hooks/useApi";
 import { TicketsTable, type TicketSortField } from "../components/TicketsTable";
 import { TicketDetailModal } from "../components/TicketDetailModal";
@@ -251,6 +251,56 @@ export function TicketsPage({ navigate }: TicketsPageProps) {
     }
   };
 
+  const [grabbing, setGrabbing] = useState(false);
+
+  const handleGrabWork = useCallback(async () => {
+    if (!data?.tickets) return;
+
+    // Find the first unassigned bug in To Do, preserving board rank order
+    const ticket = data.tickets.find(
+      (t) =>
+        t.fields.issuetype.name === "Bug" &&
+        t.fields.status.name === "To Do" &&
+        !t.fields.assignee
+    );
+
+    if (!ticket) {
+      // Nothing found — let the user know
+      alert("No unassigned To Do bugs found in the sprint.");
+      return;
+    }
+
+    setGrabbing(true);
+    try {
+      // Assign to self
+      const res = await fetch(`/api/jira/tickets/${ticket.key}/assign-self`, { method: "POST" });
+      if (res.ok) {
+        const result = await res.json();
+        const updatedTicket = {
+          ...ticket,
+          fields: {
+            ...ticket.fields,
+            assignee: { displayName: result.displayName || "You" },
+          },
+        };
+        // Update list
+        setData({
+          ...data,
+          tickets: data.tickets.map((t) => (t.key === ticket.key ? updatedTicket : t)),
+        });
+        // Open it
+        setSelectedTicket(updatedTicket);
+      } else {
+        // Still open it even if assign fails
+        setSelectedTicket(ticket);
+      }
+    } catch {
+      setSelectedTicket(ticket);
+    } finally {
+      setGrabbing(false);
+    }
+  }, [data, setData]);
+
   const handleRowClick = useCallback((ticket: TicketWithPR) => {
     setSelectedTicket(ticket);
   }, []);
@@ -326,10 +376,16 @@ export function TicketsPage({ navigate }: TicketsPageProps) {
             </span>
           )}
         </h1>
-        <button onClick={handleRefresh} disabled={refreshing} className="btn-primary flex items-center gap-2">
-          <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-          {refreshing ? "Refreshing..." : "Refresh"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={handleGrabWork} disabled={grabbing || loading} className="btn-secondary flex items-center gap-2">
+            <Zap className={`w-4 h-4 ${grabbing ? "animate-spin" : ""}`} />
+            {grabbing ? "Finding..." : "Grab a bug"}
+          </button>
+          <button onClick={handleRefresh} disabled={refreshing} className="btn-primary flex items-center gap-2">
+            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
       </div>
 
       {/* Filters Row */}

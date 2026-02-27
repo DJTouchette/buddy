@@ -172,10 +172,10 @@ export function ActivityPage({ navigate }: ActivityPageProps) {
   };
 
   const handleEventClick = (event: ActivityEvent) => {
-    if (event.link?.url) {
-      window.open(event.link.url, "_blank");
-    } else if (event.link?.path) {
+    if (event.link?.path) {
       navigate(event.link.path);
+    } else if (event.link?.url) {
+      window.open(event.link.url, "_blank");
     }
   };
 

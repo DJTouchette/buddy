@@ -145,14 +145,23 @@ export function activityRoutes(ctx: ApiContext) {
               const builds = await azureDevOpsService.getBuilds(undefined, 20);
               for (const build of builds) {
                 if (build.finishTime) {
+                  // Check if build was triggered by a PR (sourceBranch = refs/pull/{id}/merge)
+                  const prMatch = build.sourceBranch?.match(/^refs\/pull\/(\d+)\/merge$/);
+                  const prId = prMatch ? prMatch[1] : null;
+
                   events.push({
                     id: `build_${build.id}`,
                     type: "build_completed",
                     timestamp: build.finishTime,
-                    title: `Build #${build.buildNumber} ${build.result || build.status}`,
+                    title: prId
+                      ? `Build #${build.buildNumber} ${build.result || build.status} (PR #${prId})`
+                      : `Build #${build.buildNumber} ${build.result || build.status}`,
                     description: build.result === "succeeded" ? "Build passed" : `Build ${build.result || build.status}`,
                     source: "azure",
-                    metadata: { buildId: build.id, result: build.result },
+                    link: prId
+                      ? { type: "pr" as const, path: `/prs/${prId}`, url: azureDevOpsService.getBuildUrl(build.id) }
+                      : { type: "job" as const, url: azureDevOpsService.getBuildUrl(build.id) },
+                    metadata: { buildId: build.id, result: build.result, prId },
                   });
                 }
               }

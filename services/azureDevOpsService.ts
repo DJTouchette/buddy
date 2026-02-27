@@ -41,6 +41,7 @@ export interface Build {
   queueTime: string;
   startTime?: string;
   finishTime?: string;
+  sourceBranch?: string;
   url: string;
   logs?: {
     url: string;
